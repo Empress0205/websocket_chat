@@ -1,10 +1,73 @@
-# WebSocket Chat
+# WebSocket Chat: Learning WebSockets Step by Step
 
-A small real-time chat app: a Python WebSocket server and a single-page browser client, with no frameworks and no build step.
+This repo records my progress learning **WebSockets**, from first principles up to a production-ready real-time app. It grows in phases, and each phase adds one new idea on top of the last.
 
-Open the page in a few browser tabs and the messages appear in all of them instantly.
+> **Current status: Phase 1 complete, a working real-time chat.**
 
-## Features
+So far it's a Python WebSocket server and a single-page browser client, with no frameworks and no build step. Open the page in a few browser tabs and the messages appear in all of them instantly.
+
+## Learning roadmap
+
+| Phase | Focus | Status |
+|---|---|---|
+| **1** | WebSocket basics: a real-time chat | ✅ Done |
+| **2** | Rooms and private messages | 🔜 Next |
+| **3** | Saving messages and showing history | ⏳ Planned |
+| **4** | Users and authentication | ⏳ Planned |
+| **5** | Reliability: reconnecting and heartbeats | ⏳ Planned |
+| **6** | Deploying online over secure `wss://` | ⏳ Planned |
+
+### Phase 1: WebSocket basics ✅
+
+**Goal:** understand how a WebSocket connection works, and build something real with it.
+
+What I learned:
+
+- How WebSockets differ from normal HTTP: one connection stays open, and either side can send at any moment.
+- Opening a connection from the browser with `new WebSocket(...)` and handling the `onopen`, `onmessage` and `onclose` events.
+- Writing an async server in Python with `asyncio` and the `websockets` library.
+- Keeping track of connected clients and **broadcasting** a message to all of them.
+- Designing a small **message protocol** with JSON and a `type` field (`chat`, `typing`, `info`, `welcome`).
+- Sending to everyone *except* one client, which the typing indicator relies on.
+- **Throttling** messages so the page doesn't send one on every keystroke.
+- Never trusting client input: the server ignores bad messages and the page uses `textContent` so nobody can inject HTML.
+
+### Phase 2: Rooms and private messages 🔜
+
+- Join and leave named chat rooms (channels).
+- Only broadcast messages to people in the same room.
+- Send direct messages between two users.
+- Show a list of who's online.
+
+### Phase 3: Message history ⏳
+
+- Store messages in a database such as SQLite.
+- Send recent history to people when they join.
+- Load older messages when you scroll up.
+
+### Phase 4: Users and authentication ⏳
+
+- Sign up and log in, so display names can't be faked.
+- Authenticate the WebSocket connection with a token.
+- Rate-limit clients to stop spam.
+
+### Phase 5: Reliability ⏳
+
+- Reconnect automatically when the connection drops.
+- Use ping/pong heartbeats to detect dead connections.
+- Handle messages that were sent while a client was offline.
+
+### Phase 6: Deployment ⏳
+
+- Host the server online and serve the page from the same place.
+- Use secure WebSockets (`wss://`) over HTTPS.
+- Look at how to scale past a single server, for example using Redis pub/sub.
+
+---
+
+## Phase 1 in detail
+
+### Features
 
 - **Real-time messaging.** Messages go to every connected client the moment they're sent.
 - **Chat bubbles.** Your messages appear on the right and everyone else's on the left, grouped by sender, each with a timestamp.
@@ -74,18 +137,17 @@ By default the server listens on `localhost:8765` and the page connects to `ws:/
 - **Server:** edit the host and port in `main()` in `server.py`.
 - **Client:** edit the URL in `new WebSocket(...)` in `index.html`.
 
-## Deploying
+## Known limitations and when they get fixed
 
-To make the chat available on the internet:
+Phase 1 deliberately keeps things simple. These gaps are what the next phases are for:
 
-1. Host `server.py` on a service that keeps a process running (for example Render, Railway, Fly.io or a VPS).
-2. Make the server listen on `0.0.0.0` and use the port your host provides.
-3. Point the client at your server's address using `wss://` (secure WebSockets). Browsers block plain `ws://` on pages served over HTTPS.
-
-## Limitations
-
-- Messages aren't stored. They're lost when the server restarts, and someone who joins later doesn't see earlier messages.
-- There are no accounts or logins, so anyone can choose any display name.
+| Limitation | Fixed in |
+|---|---|
+| Everyone shares one chat, with no rooms or private messages | Phase 2 |
+| Messages aren't saved, so they're lost on restart and newcomers see no history | Phase 3 |
+| No accounts, so anyone can use any display name | Phase 4 |
+| If the connection drops, you have to reload the page | Phase 5 |
+| Only runs on `localhost` | Phase 6 |
 
 ## License
 
