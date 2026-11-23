@@ -16,21 +16,79 @@
       min-height: 100vh;
     }
 
-    /* The chat window */
-    .chat {
+    /* The app window: sidebar on the left, chat on the right */
+    .app {
       width: 100%;
-      max-width: 480px;
+      max-width: 820px;
       height: 90vh;
       max-height: 720px;
       background: #fff;
       border-radius: 16px;
       box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
       display: flex;
-      flex-direction: column;
       overflow: hidden;
     }
 
-    /* Header */
+    /* Sidebar */
+    .sidebar {
+      width: 220px;
+      flex-shrink: 0;
+      background: #f3f5f8;
+      border-right: 1px solid #e6e9ee;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+    .sidebar h2 {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #6b7280;
+      margin: 18px 16px 6px;
+    }
+    .list { list-style: none; margin: 0; padding: 0 8px; }
+    .item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 8px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      color: #374151;
+      cursor: pointer;
+    }
+    .item:hover { background: #e6e9ee; }
+    .item.active { background: #3b82f6; color: #fff; }
+    .item .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .item .meta { font-size: 0.72rem; color: #9ca3af; }
+    .item.active .meta { color: #dbeafe; }
+    .badge {
+      background: #ef4444;
+      color: #fff;
+      font-size: 0.68rem;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 999px;
+    }
+    .avatar {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: #c7d2fe; color: #3730a3;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.7rem; font-weight: 600; flex-shrink: 0;
+    }
+    .empty { font-size: 0.8rem; color: #9ca3af; padding: 4px 16px; }
+    #new-room {
+      margin: 6px 16px 0;
+      padding: 6px 10px;
+      border: 1px solid #e6e9ee;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      width: calc(100% - 32px);
+    }
+
+    /* Chat panel */
+    .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+
     .header {
       padding: 14px 18px;
       border-bottom: 1px solid #e6e9ee;
@@ -38,7 +96,8 @@
       align-items: center;
       gap: 12px;
     }
-    .header h1 { font-size: 1.05rem; margin: 0; flex: 1; }
+    .header h1 { font-size: 1.05rem; margin: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .header .sub { font-weight: 400; color: #9ca3af; font-size: 0.8rem; margin-left: 6px; }
     .status { font-size: 0.8rem; color: #6b7280; display: flex; align-items: center; gap: 6px; }
     .dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
     .dot.on { background: #22c55e; }
@@ -51,16 +110,18 @@
       font-size: 0.85rem;
     }
 
-    /* Message list */
-    #log {
-      flex: 1;
+    /* Message lists: one per conversation, only the active one is shown */
+    #logs { flex: 1; position: relative; background: #f8fafc; }
+    .log {
+      position: absolute;
+      inset: 0;
       overflow-y: auto;
       padding: 16px;
-      display: flex;
+      display: none;
       flex-direction: column;
       gap: 4px;
-      background: #f8fafc;
     }
+    .log.active { display: flex; }
 
     /* One message row. "mine" goes right, "theirs" goes left. */
     .row { display: flex; flex-direction: column; max-width: 75%; }
@@ -79,6 +140,7 @@
     }
     .mine .bubble   { background: #3b82f6; color: #fff; border-bottom-right-radius: 4px; }
     .theirs .bubble { background: #fff; color: #111827; border: 1px solid #e6e9ee; border-bottom-left-radius: 4px; }
+    .dm-log .mine .bubble { background: #7c3aed; }
 
     .time { font-size: 0.68rem; color: #9ca3af; margin: 2px 6px 0; }
 
@@ -91,7 +153,9 @@
       padding: 3px 10px;
       border-radius: 999px;
       margin: 8px 0;
+      text-align: center;
     }
+    .info.error { background: #fee2e2; color: #b91c1c; }
 
     /* Typing indicator with bouncing dots */
     #typing {
@@ -125,6 +189,7 @@
     }
     #text {
       flex: 1;
+      min-width: 0;
       padding: 10px 14px;
       border: 1px solid #e6e9ee;
       border-radius: 999px;
@@ -143,37 +208,114 @@
     }
     #send:hover { background: #2563eb; }
     #send:disabled { background: #93c5fd; cursor: default; }
+
+    /* Small screens: put the sidebar above the chat */
+    @media (max-width: 640px) {
+      .app { flex-direction: column; height: 100vh; max-height: none; border-radius: 0; }
+      .sidebar { width: auto; max-height: 34vh; border-right: none; border-bottom: 1px solid #e6e9ee; }
+    }
   </style>
 </head>
 <body>
-  <div class="chat">
-    <div class="header">
-      <h1>WebSocket Chat</h1>
-      <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
-      <input id="name" placeholder="Your name" value="Guest">
-    </div>
+  <div class="app">
+    <aside class="sidebar">
+      <h2>Rooms</h2>
+      <ul class="list" id="rooms"></ul>
+      <input id="new-room" placeholder="+ Join or create a room" autocomplete="off">
 
-    <div id="log"></div>
-    <div id="typing"></div>
+      <h2>Online</h2>
+      <ul class="list" id="users"></ul>
+    </aside>
 
-    <div class="composer">
-      <input id="text" placeholder="Type a message…" autocomplete="off">
-      <button id="send" disabled>Send</button>
-    </div>
+    <section class="chat">
+      <div class="header">
+        <h1 id="title">#general</h1>
+        <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+        <input id="name" placeholder="Your name" value="Guest" maxlength="30">
+      </div>
+
+      <div id="logs"></div>
+      <div id="typing"></div>
+
+      <div class="composer">
+        <input id="text" placeholder="Type a message…" autocomplete="off">
+        <button id="send" disabled>Send</button>
+      </div>
+    </section>
   </div>
 
   <script>
-    const log = document.getElementById("log");
+    const DEFAULT_ROOMS = ["general", "random", "help"];
+
+    const logs = document.getElementById("logs");
+    const titleEl = document.getElementById("title");
     const statusText = document.getElementById("status");
     const dot = document.getElementById("dot");
     const sendBtn = document.getElementById("send");
     const textInput = document.getElementById("text");
     const nameInput = document.getElementById("name");
+    const roomsList = document.getElementById("rooms");
+    const usersList = document.getElementById("users");
+    const newRoomInput = document.getElementById("new-room");
 
     // The server tells us our own id in a "welcome" message.
-    // We compare it with each chat message's id to decide left or right.
+    // We compare it with each message's id to decide left or right.
     let myId = null;
-    let lastSenderId = null; // used to group messages from the same person
+    let currentRoom = null;   // the room the server has us in
+    let users = [];           // everyone online: [{ id, name, room }]
+
+    // --- Conversations ---
+    // A conversation is either a room ("room:general") or a private chat with
+    // one person ("dm:<their id>"). Each one gets its own message list, so
+    // switching between them doesn't mix messages up.
+    const conversations = new Map(); // key -> { log, lastSenderId, unread, name }
+    let activeKey = null;
+
+    function getConversation(key, name) {
+      let c = conversations.get(key);
+      if (!c) {
+        const log = document.createElement("div");
+        log.className = "log" + (key.startsWith("dm:") ? " dm-log" : "");
+        logs.appendChild(log);
+        c = { log, lastSenderId: null, unread: 0, name };
+        conversations.set(key, c);
+      }
+      if (name) c.name = name;
+      return c;
+    }
+
+    function openConversation(key) {
+      activeKey = key;
+      const c = getConversation(key);
+      c.unread = 0;
+      for (const other of conversations.values()) other.log.classList.toggle("active", other === c);
+      scrollToBottom(c);
+      renderTitle();
+      renderSidebar();
+      renderTyping();
+      textInput.focus();
+    }
+
+    function renderTitle() {
+      titleEl.textContent = "";
+      if (!activeKey) return;
+      if (activeKey.startsWith("room:")) {
+        const room = activeKey.slice(5);
+        titleEl.textContent = "#" + room;
+        const sub = document.createElement("span");
+        sub.className = "sub";
+        sub.textContent = `${users.filter(u => u.room === room).length} here`;
+        titleEl.appendChild(sub);
+      } else {
+        const id = activeKey.slice(3);
+        const user = users.find(u => u.id === id);
+        titleEl.textContent = "@" + (user ? user.name : getConversation(activeKey).name);
+        const sub = document.createElement("span");
+        sub.className = "sub";
+        sub.textContent = user ? "private chat" : "offline";
+        titleEl.appendChild(sub);
+      }
+    }
 
     function myName() { return nameInput.value.trim() || "Guest"; }
 
@@ -181,13 +323,21 @@
       return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     }
 
-    function scrollToBottom() { log.scrollTop = log.scrollHeight; }
+    function scrollToBottom(c) { c.log.scrollTop = c.log.scrollHeight; }
+
+    // A message arrived in a conversation we're not looking at: count it as unread.
+    function markUnread(key) {
+      if (key === activeKey) return;
+      getConversation(key).unread++;
+      renderSidebar();
+    }
 
     // Add a chat bubble. Mine on the right, everyone else's on the left.
-    function addMessage(msg) {
+    function addMessage(key, msg) {
+      const c = getConversation(key);
       const mine = msg.id === myId;
-      const newSender = msg.id !== lastSenderId;
-      lastSenderId = msg.id;
+      const newSender = msg.id !== c.lastSenderId;
+      c.lastSenderId = msg.id;
 
       const row = document.createElement("div");
       row.className = "row " + (mine ? "mine" : "theirs") + (newSender ? " new-sender" : "");
@@ -210,42 +360,151 @@
       time.textContent = timeNow();
       row.appendChild(time);
 
-      log.appendChild(row);
-      scrollToBottom();
+      c.log.appendChild(row);
+      scrollToBottom(c);
+      markUnread(key);
     }
 
-    function addInfo(text) {
+    function addInfo(key, text, isError = false) {
+      const c = getConversation(key);
       const div = document.createElement("div");
-      div.className = "info";
+      div.className = "info" + (isError ? " error" : "");
       div.textContent = text;
-      log.appendChild(div);
-      lastSenderId = null; // start a new group after a notice
-      scrollToBottom();
+      c.log.appendChild(div);
+      c.lastSenderId = null; // start a new group after a notice
+      scrollToBottom(c);
     }
+
+    // --- Sidebar ---
+    function makeItem(label, { active, meta, badge, avatar, onClick }) {
+      const li = document.createElement("li");
+      li.className = "item" + (active ? " active" : "");
+      if (avatar) {
+        const a = document.createElement("span");
+        a.className = "avatar";
+        a.textContent = avatar;
+        li.appendChild(a);
+      }
+      const l = document.createElement("span");
+      l.className = "label";
+      l.textContent = label;
+      li.appendChild(l);
+      if (badge) {
+        const b = document.createElement("span");
+        b.className = "badge";
+        b.textContent = badge;
+        li.appendChild(b);
+      } else if (meta) {
+        const m = document.createElement("span");
+        m.className = "meta";
+        m.textContent = meta;
+        li.appendChild(m);
+      }
+      li.onclick = onClick;
+      return li;
+    }
+
+    function renderSidebar() {
+      // Rooms: the default ones, plus any room someone is in right now.
+      const rooms = [...new Set([...DEFAULT_ROOMS, ...users.map(u => u.room), currentRoom].filter(Boolean))];
+      roomsList.textContent = "";
+      for (const room of rooms) {
+        const key = "room:" + room;
+        const count = users.filter(u => u.room === room).length;
+        roomsList.appendChild(makeItem("# " + room, {
+          active: key === activeKey,
+          meta: count ? String(count) : "",
+          badge: conversations.get(key)?.unread || 0,
+          onClick: () => switchRoom(room),
+        }));
+      }
+
+      // Online users: everyone except me. Click someone to message them privately.
+      const others = users.filter(u => u.id !== myId);
+      usersList.textContent = "";
+      if (others.length === 0) {
+        const p = document.createElement("li");
+        p.className = "empty";
+        p.textContent = "Nobody else is online.";
+        usersList.appendChild(p);
+      }
+      for (const u of others) {
+        const key = "dm:" + u.id;
+        usersList.appendChild(makeItem(u.name, {
+          active: key === activeKey,
+          avatar: u.name.charAt(0).toUpperCase(),
+          meta: "#" + u.room,
+          badge: conversations.get(key)?.unread || 0,
+          onClick: () => {
+            getConversation(key, u.name);
+            openConversation(key);
+          },
+        }));
+      }
+    }
+
+    // --- Talking to the server ---
 
     // 1. Open the connection. Note "ws://" instead of "http://".
     const socket = new WebSocket("ws://localhost:8765");
 
-    // 2. Runs once, when the connection is ready.
+    function sendJSON(obj) {
+      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(obj));
+    }
+
+    function switchRoom(room) {
+      if (room === currentRoom) {
+        openConversation("room:" + room);
+      } else {
+        sendJSON({ type: "join", room, name: myName() }); // the server replies with "joined"
+      }
+    }
+
+    // 2. Runs once, when the connection is ready. Join the default room.
     socket.onopen = () => {
       statusText.textContent = "Connected";
       dot.className = "dot on";
       sendBtn.disabled = false;
-      textInput.focus();
+      sendJSON({ type: "join", room: "general", name: myName() });
     };
 
     // 3. Runs every time the server sends us something, at any moment.
     socket.onmessage = (event) => {
       const msg = JSON.parse(event.data);
+
       if (msg.type === "welcome") {
         myId = msg.id;
+
+      } else if (msg.type === "joined") {
+        // The server moved us into a room (it may have cleaned up the name).
+        currentRoom = msg.room;
+        openConversation("room:" + msg.room);
+
       } else if (msg.type === "chat") {
-        addMessage(msg);
+        addMessage("room:" + msg.room, msg);
         clearTyping(msg.id); // they sent it, so they're done typing
+
+      } else if (msg.type === "dm") {
+        // If I sent it, the conversation is with the recipient; otherwise with the sender.
+        const otherId = msg.id === myId ? msg.to : msg.id;
+        const other = users.find(u => u.id === otherId);
+        getConversation("dm:" + otherId, other ? other.name : msg.name);
+        addMessage("dm:" + otherId, msg);
+        clearTyping(msg.id);
+
       } else if (msg.type === "typing") {
-        showTyping(msg.id, msg.name);
+        showTyping(msg.id, msg.name, msg.dm ? "dm:" + msg.id : "room:" + msg.room);
+
       } else if (msg.type === "info") {
-        addInfo(msg.text);
+        addInfo("room:" + msg.room, msg.text);
+
+      } else if (msg.type === "users") {
+        users = msg.users;
+        renderSidebar();
+        renderTitle();
+
+      } else if (msg.type === "error") {
+        if (activeKey) addInfo(activeKey, msg.text, true);
       }
     };
 
@@ -257,12 +516,13 @@
     };
 
     // --- Typing indicator (receiving side) ---
-    // id -> { name, timer }. Each person's "typing" disappears 2s after their last keystroke.
+    // id -> { name, key, timer }. Each person's "typing" disappears 2s after their
+    // last keystroke, and only shows in the conversation they're typing in.
     const typers = new Map();
     const typingDiv = document.getElementById("typing");
 
     function renderTyping() {
-      const names = [...typers.values()].map(t => t.name);
+      const names = [...typers.values()].filter(t => t.key === activeKey).map(t => t.name);
       typingDiv.textContent = "";
       if (names.length === 0) return;
 
@@ -278,10 +538,10 @@
       typingDiv.appendChild(label);
     }
 
-    function showTyping(id, name) {
+    function showTyping(id, name, key) {
       const old = typers.get(id);
       if (old) clearTimeout(old.timer);
-      typers.set(id, { name, timer: setTimeout(() => clearTyping(id), 2000) });
+      typers.set(id, { name, key, timer: setTimeout(() => clearTyping(id), 2000) });
       renderTyping();
     }
 
@@ -293,11 +553,15 @@
       renderTyping();
     }
 
-    // 5. Send a chat message to the server.
+    // 5. Send a message to whatever conversation is open.
     function send() {
       const text = textInput.value.trim();
-      if (!text || socket.readyState !== WebSocket.OPEN) return;
-      socket.send(JSON.stringify({ type: "chat", name: myName(), text }));
+      if (!text || !activeKey || socket.readyState !== WebSocket.OPEN) return;
+      if (activeKey.startsWith("dm:")) {
+        sendJSON({ type: "dm", to: activeKey.slice(3), text });
+      } else if (activeKey === "room:" + currentRoom) {
+        sendJSON({ type: "chat", text });
+      }
       textInput.value = "";
       textInput.focus();
     }
@@ -305,14 +569,27 @@
     sendBtn.onclick = send;
     textInput.onkeydown = (e) => { if (e.key === "Enter") send(); };
 
+    // Tell the server when the name changes, so everyone's online list updates.
+    nameInput.onchange = () => sendJSON({ type: "rename", name: myName() });
+    nameInput.onkeydown = (e) => { if (e.key === "Enter") nameInput.blur(); };
+
+    newRoomInput.onkeydown = (e) => {
+      if (e.key !== "Enter") return;
+      const room = newRoomInput.value.trim();
+      if (room) switchRoom(room);
+      newRoomInput.value = "";
+    };
+
     // --- Typing indicator (sending side) ---
     // Sending on every keystroke would flood the server, so send at most once per second.
     let lastTypingSent = 0;
     textInput.oninput = () => {
       const now = Date.now();
-      if (now - lastTypingSent < 1000 || socket.readyState !== WebSocket.OPEN) return;
+      if (now - lastTypingSent < 1000 || !activeKey) return;
       lastTypingSent = now;
-      socket.send(JSON.stringify({ type: "typing", name: myName() }));
+      sendJSON(activeKey.startsWith("dm:")
+        ? { type: "typing", to: activeKey.slice(3) }
+        : { type: "typing" });
     };
   </script>
 </body>
