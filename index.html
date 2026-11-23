@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebSocket Chat</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: #eef1f5;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    /* The chat window */
+    .chat {
+      width: 100%;
+      max-width: 480px;
+      height: 90vh;
+      max-height: 720px;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* Header */
+    .header {
+      padding: 14px 18px;
+      border-bottom: 1px solid #e6e9ee;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header h1 { font-size: 1.05rem; margin: 0; flex: 1; }
+    .status { font-size: 0.8rem; color: #6b7280; display: flex; align-items: center; gap: 6px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
+    .dot.on { background: #22c55e; }
+    .dot.off { background: #ef4444; }
+    #name {
+      width: 120px;
+      padding: 6px 10px;
+      border: 1px solid #e6e9ee;
+      border-radius: 8px;
+      font-size: 0.85rem;
+    }
+
+    /* Message list */
+    #log {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      background: #f8fafc;
+    }
+
+    /* One message row. "mine" goes right, "theirs" goes left. */
+    .row { display: flex; flex-direction: column; max-width: 75%; }
+    .row.mine   { align-self: flex-end;   align-items: flex-end; }
+    .row.theirs { align-self: flex-start; align-items: flex-start; }
+    .row.new-sender { margin-top: 10px; }
+
+    .sender { font-size: 0.75rem; color: #6b7280; margin: 0 6px 2px; }
+
+    .bubble {
+      padding: 8px 12px;
+      border-radius: 16px;
+      line-height: 1.35;
+      word-wrap: break-word;
+      white-space: pre-wrap;
+    }
+    .mine .bubble   { background: #3b82f6; color: #fff; border-bottom-right-radius: 4px; }
+    .theirs .bubble { background: #fff; color: #111827; border: 1px solid #e6e9ee; border-bottom-left-radius: 4px; }
+
+    .time { font-size: 0.68rem; color: #9ca3af; margin: 2px 6px 0; }
+
+    /* "Someone joined" notices */
+    .info {
+      align-self: center;
+      font-size: 0.75rem;
+      color: #6b7280;
+      background: #e9edf2;
+      padding: 3px 10px;
+      border-radius: 999px;
+      margin: 8px 0;
+    }
+
+    /* Typing indicator with bouncing dots */
+    #typing {
+      height: 26px;
+      padding: 0 18px;
+      font-size: 0.8rem;
+      color: #6b7280;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #f8fafc;
+    }
+    .dots { display: inline-flex; gap: 3px; }
+    .dots span {
+      width: 5px; height: 5px; border-radius: 50%; background: #9ca3af;
+      animation: bounce 1.2s infinite;
+    }
+    .dots span:nth-child(2) { animation-delay: 0.15s; }
+    .dots span:nth-child(3) { animation-delay: 0.3s; }
+    @keyframes bounce {
+      0%, 60%, 100% { transform: translateY(0); opacity: 0.5; }
+      30% { transform: translateY(-4px); opacity: 1; }
+    }
+
+    /* Input bar */
+    .composer {
+      display: flex;
+      gap: 8px;
+      padding: 12px;
+      border-top: 1px solid #e6e9ee;
+    }
+    #text {
+      flex: 1;
+      padding: 10px 14px;
+      border: 1px solid #e6e9ee;
+      border-radius: 999px;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    #text:focus { border-color: #3b82f6; }
+    #send {
+      padding: 0 18px;
+      border: none;
+      border-radius: 999px;
+      background: #3b82f6;
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    #send:hover { background: #2563eb; }
+    #send:disabled { background: #93c5fd; cursor: default; }
+  </style>
+</head>
+<body>
+  <div class="chat">
+    <div class="header">
+      <h1>WebSocket Chat</h1>
+      <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+      <input id="name" placeholder="Your name" value="Guest">
+    </div>
+
+    <div id="log"></div>
+    <div id="typing"></div>
+
+    <div class="composer">
+      <input id="text" placeholder="Type a message…" autocomplete="off">
+      <button id="send" disabled>Send</button>
+    </div>
+  </div>
+
+  <script>
+    const log = document.getElementById("log");
+    const statusText = document.getElementById("status");
+    const dot = document.getElementById("dot");
+    const sendBtn = document.getElementById("send");
+    const textInput = document.getElementById("text");
+    const nameInput = document.getElementById("name");
+
+    // The server tells us our own id in a "welcome" message.
+    // We compare it with each chat message's id to decide left or right.
+    let myId = null;
+    let lastSenderId = null; // used to group messages from the same person
+
+    function myName() { return nameInput.value.trim() || "Guest"; }
+
+    function timeNow() {
+      return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function scrollToBottom() { log.scrollTop = log.scrollHeight; }
+
+    // Add a chat bubble. Mine on the right, everyone else's on the left.
+    function addMessage(msg) {
+      const mine = msg.id === myId;
+      const newSender = msg.id !== lastSenderId;
+      lastSenderId = msg.id;
+
+      const row = document.createElement("div");
+      row.className = "row " + (mine ? "mine" : "theirs") + (newSender ? " new-sender" : "");
+
+      // Show the name only on others' messages, and only once per group.
+      if (!mine && newSender) {
+        const sender = document.createElement("div");
+        sender.className = "sender";
+        sender.textContent = msg.name;
+        row.appendChild(sender);
+      }
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = msg.text; // textContent (not innerHTML) so nobody can inject HTML
+      row.appendChild(bubble);
+
+      const time = document.createElement("div");
+      time.className = "time";
+      time.textContent = timeNow();
+      row.appendChild(time);
+
+      log.appendChild(row);
+      scrollToBottom();
+    }
+
+    function addInfo(text) {
+      const div = document.createElement("div");
+      div.className = "info";
+      div.textContent = text;
+      log.appendChild(div);
+      lastSenderId = null; // start a new group after a notice
+      scrollToBottom();
+    }
+
+    // 1. Open the connection. Note "ws://" instead of "http://".
+    const socket = new WebSocket("ws://localhost:8765");
+
+    // 2. Runs once, when the connection is ready.
+    socket.onopen = () => {
+      statusText.textContent = "Connected";
+      dot.className = "dot on";
+      sendBtn.disabled = false;
+      textInput.focus();
+    };
+
+    // 3. Runs every time the server sends us something, at any moment.
+    socket.onmessage = (event) => {
+      const msg = JSON.parse(event.data);
+      if (msg.type === "welcome") {
+        myId = msg.id;
+      } else if (msg.type === "chat") {
+        addMessage(msg);
+        clearTyping(msg.id); // they sent it, so they're done typing
+      } else if (msg.type === "typing") {
+        showTyping(msg.id, msg.name);
+      } else if (msg.type === "info") {
+        addInfo(msg.text);
+      }
+    };
+
+    // 4. Runs if the connection closes (for example, the server stopped).
+    socket.onclose = () => {
+      statusText.textContent = "Disconnected";
+      dot.className = "dot off";
+      sendBtn.disabled = true;
+    };
+
+    // --- Typing indicator (receiving side) ---
+    // id -> { name, timer }. Each person's "typing" disappears 2s after their last keystroke.
+    const typers = new Map();
+    const typingDiv = document.getElementById("typing");
+
+    function renderTyping() {
+      const names = [...typers.values()].map(t => t.name);
+      typingDiv.textContent = "";
+      if (names.length === 0) return;
+
+      const dots = document.createElement("span");
+      dots.className = "dots";
+      dots.innerHTML = "<span></span><span></span><span></span>";
+      typingDiv.appendChild(dots);
+
+      const label = document.createElement("span");
+      label.textContent = names.length === 1
+        ? `${names[0]} is typing…`
+        : `${names.join(", ")} are typing…`;
+      typingDiv.appendChild(label);
+    }
+
+    function showTyping(id, name) {
+      const old = typers.get(id);
+      if (old) clearTimeout(old.timer);
+      typers.set(id, { name, timer: setTimeout(() => clearTyping(id), 2000) });
+      renderTyping();
+    }
+
+    function clearTyping(id) {
+      const t = typers.get(id);
+      if (!t) return;
+      clearTimeout(t.timer);
+      typers.delete(id);
+      renderTyping();
+    }
+
+    // 5. Send a chat message to the server.
+    function send() {
+      const text = textInput.value.trim();
+      if (!text || socket.readyState !== WebSocket.OPEN) return;
+      socket.send(JSON.stringify({ type: "chat", name: myName(), text }));
+      textInput.value = "";
+      textInput.focus();
+    }
+
+    sendBtn.onclick = send;
+    textInput.onkeydown = (e) => { if (e.key === "Enter") send(); };
+
+    // --- Typing indicator (sending side) ---
+    // Sending on every keystroke would flood the server, so send at most once per second.
+    let lastTypingSent = 0;
+    textInput.oninput = () => {
+      const now = Date.now();
+      if (now - lastTypingSent < 1000 || socket.readyState !== WebSocket.OPEN) return;
+      lastTypingSent = now;
+      socket.send(JSON.stringify({ type: "typing", name: myName() }));
+    };
+  </script>
+</body>
+</html>
