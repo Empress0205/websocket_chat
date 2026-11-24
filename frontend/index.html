@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WebSocket Chat</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <h2>Rooms</h2>
+      <ul class="list" id="rooms"></ul>
+
+      <h2>People</h2>
+      <ul class="list" id="users"></ul>
+
+      <!-- Only admins see this button -->
+      <button id="manage-rooms" class="hidden">Admin</button>
+    </aside>
+
+    <section class="chat">
+      <div class="header">
+        <h1 id="title">general</h1>
+        <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
+        <span class="me">Signed in as <b id="me-name"></b></span>
+        <button id="logout">Log out</button>
+      </div>
+
+      <div id="logs"></div>
+      <div id="typing"></div>
+
+      <div class="composer">
+        <input id="text" placeholder="Type a message…" autocomplete="off">
+        <button id="send" disabled>Send</button>
+      </div>
+    </section>
+  </div>
+
+  <!-- Admin panel (only admins can open it, and the server checks again) -->
+  <div id="admin" class="hidden">
+    <div class="admin-card">
+      <div class="admin-head">
+        <h2>Admin</h2>
+        <button id="admin-close" title="Close">&times;</button>
+      </div>
+      <h3 class="admin-sub">Accounts</h3>
+      <form class="row-form" id="create-user">
+        <input id="new-username" placeholder="Username" maxlength="20" autocomplete="off">
+        <input id="new-password" placeholder="Starting password" maxlength="128" autocomplete="new-password">
+        <button>Create</button>
+      </form>
+      <p class="muted">3 to 20 letters, digits or _. Password at least 8 characters. Give the person their password yourself.</p>
+
+      <h3 class="admin-sub">Rooms</h3>
+      <form class="row-form" id="create-room">
+        <input id="create-room-name" placeholder="New private room, e.g. bank-x" maxlength="20" autocomplete="off">
+        <button>Create</button>
+      </form>
+      <!-- Kept outside #admin-rooms, so redrawing the list doesn't wipe the message -->
+      <p id="admin-msg" class="info hidden"></p>
+      <div id="admin-rooms"></div>
+    </div>
+  </div>
+
+  <!-- Phase 4: nothing works until you log in -->
+  <div id="login">
+    <form class="login-card" id="login-form">
+      <h2>WebSocket Chat</h2>
+      <input id="username" placeholder="Username" autocomplete="username" maxlength="20" required>
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" maxlength="128" required>
+      <button id="login-submit" disabled>Log in</button>
+      <p id="login-error"></p>
+      <p class="hint">No account? Accounts are created by your admin.</p>
+    </form>
+  </div>
+
+  <!-- type="module" lets the JavaScript files import from each other.
+       Modules only load over http://, so open this page with Live Server
+       (or any web server), not by double-clicking the file. -->
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
