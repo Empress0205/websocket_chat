@@ -229,7 +229,7 @@
 
     <section class="chat">
       <div class="header">
-        <h1 id="title">#general</h1>
+        <h1 id="title">general</h1>
         <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
         <input id="name" placeholder="Your name" value="Guest" maxlength="30">
       </div>
@@ -261,6 +261,15 @@
     // The server tells us our own id in a "welcome" message.
     // We compare it with each message's id to decide left or right.
     let myId = null;
+
+    // An id for this browser tab that survives reloads (sessionStorage is kept
+    // per tab until the tab is closed). The server uses it as our id, so the
+    // messages we sent before a reload still show up on our side.
+    let clientId = sessionStorage.getItem("chatClientId");
+    if (!clientId) {
+      clientId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
+      sessionStorage.setItem("chatClientId", clientId);
+    }
     let currentRoom = null;   // the room the server has us in
     let users = [];           // everyone online: [{ id, name, room }]
 
@@ -277,8 +286,10 @@
         const log = document.createElement("div");
         log.className = "log" + (key.startsWith("dm:") ? " dm-log" : "");
         logs.appendChild(log);
-        c = { log, lastSenderId: null, unread: 0, name };
+        // oldestId / hasMore / loading are for "scroll up to load older messages".
+        c = { log, lastSenderId: null, unread: 0, name, oldestId: null, hasMore: false, loading: false };
         conversations.set(key, c);
+        log.addEventListener("scroll", () => maybeLoadOlder(key));
       }
       if (name) c.name = name;
       return c;
@@ -319,8 +330,13 @@
 
     function myName() { return nameInput.value.trim() || "Guest"; }
 
-    function timeNow() {
-      return new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    // The server stamps every message with the time it was sent (in UTC).
+    // Show just the time for today's messages, and the date too for older ones.
+    function formatTime(sentAt) {
+      const d = sentAt ? new Date(sentAt) : new Date();
+      const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      if (d.toDateString() === new Date().toDateString()) return time;
+      return d.toLocaleDateString([], { day: "numeric", month: "short" }) + ", " + time;
     }
 
     function scrollToBottom(c) { c.log.scrollTop = c.log.scrollHeight; }
@@ -332,12 +348,11 @@
       renderSidebar();
     }
 
-    // Add a chat bubble. Mine on the right, everyone else's on the left.
-    function addMessage(key, msg) {
-      const c = getConversation(key);
+    // Build one chat bubble. Mine on the right, everyone else's on the left.
+    // `prevSenderId` is who sent the message just above it, for grouping.
+    function buildRow(msg, prevSenderId) {
       const mine = msg.id === myId;
-      const newSender = msg.id !== c.lastSenderId;
-      c.lastSenderId = msg.id;
+      const newSender = msg.id !== prevSenderId;
 
       const row = document.createElement("div");
       row.className = "row " + (mine ? "mine" : "theirs") + (newSender ? " new-sender" : "");
@@ -357,12 +372,68 @@
 
       const time = document.createElement("div");
       time.className = "time";
-      time.textContent = timeNow();
+      time.textContent = formatTime(msg.sent_at);
       row.appendChild(time);
+      return row;
+    }
 
-      c.log.appendChild(row);
+    // A new message arrived: add it at the bottom.
+    function addMessage(key, msg) {
+      const c = getConversation(key);
+      c.log.appendChild(buildRow(msg, c.lastSenderId));
+      c.lastSenderId = msg.id;
+      if (c.oldestId === null && msg.msg_id) c.oldestId = msg.msg_id;
       scrollToBottom(c);
       markUnread(key);
+    }
+
+    // --- Message history (Phase 3) ---
+
+    // Build a batch of saved messages, oldest first, as one fragment.
+    function buildHistory(messages) {
+      const frag = document.createDocumentFragment();
+      let prev = null;
+      for (const m of messages) {
+        frag.appendChild(buildRow(m, prev));
+        prev = m.id;
+      }
+      return { frag, lastSenderId: prev };
+    }
+
+    function showHistory(msg) {
+      const c = getConversation("room:" + msg.room);
+      c.loading = false;
+      c.hasMore = msg.more;
+      if (msg.messages.length) c.oldestId = msg.messages[0].msg_id;
+      const { frag, lastSenderId } = buildHistory(msg.messages);
+
+      if (msg.older) {
+        // Older messages go on top. Keep the view where it was, so the
+        // messages the user is reading don't jump away.
+        const oldHeight = c.log.scrollHeight;
+        c.log.prepend(frag);
+        c.log.scrollTop += c.log.scrollHeight - oldHeight;
+      } else {
+        // Just joined: replace whatever we had with the saved history.
+        c.log.textContent = "";
+        c.log.appendChild(frag);
+        c.lastSenderId = lastSenderId;
+        scrollToBottom(c);
+      }
+      if (!c.hasMore && msg.messages.length) {
+        const start = document.createElement("div");
+        start.className = "info";
+        start.textContent = "This is the start of #" + msg.room;
+        c.log.prepend(start);
+      }
+    }
+
+    // When the user scrolls near the top of a room, ask for older messages.
+    function maybeLoadOlder(key) {
+      const c = conversations.get(key);
+      if (!key.startsWith("room:") || !c.hasMore || c.loading || c.log.scrollTop > 40) return;
+      c.loading = true;
+      sendJSON({ type: "load_more", before: c.oldestId });
     }
 
     function addInfo(key, text, isError = false) {
@@ -465,7 +536,7 @@
       statusText.textContent = "Connected";
       dot.className = "dot on";
       sendBtn.disabled = false;
-      sendJSON({ type: "join", room: "general", name: myName() });
+      sendJSON({ type: "join", room: "general", name: myName(), client_id: clientId });
     };
 
     // 3. Runs every time the server sends us something, at any moment.
@@ -478,7 +549,11 @@
       } else if (msg.type === "joined") {
         // The server moved us into a room (it may have cleaned up the name).
         currentRoom = msg.room;
+        myId = msg.id; // the server confirms which id we have
         openConversation("room:" + msg.room);
+
+      } else if (msg.type === "history") {
+        showHistory(msg);
 
       } else if (msg.type === "chat") {
         addMessage("room:" + msg.room, msg);
