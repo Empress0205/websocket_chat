@@ -2,7 +2,7 @@
 
 This repo records my progress learning **WebSockets**, from first principles up to a production-ready real-time app. It grows in phases, and each phase adds one new idea on top of the last.
 
-> **Current status: Phase 2 complete, a chat with rooms, private messages and an online list.**
+> **Current status: Phase 3 complete, a chat with rooms, private messages, an online list and saved message history.**
 
 So far it's a Python WebSocket server and a single-page browser client, with no frameworks and no build step. Open the page in a few browser tabs, put them in different rooms, and message each other publicly or privately.
 
@@ -12,8 +12,8 @@ So far it's a Python WebSocket server and a single-page browser client, with no 
 |---|---|---|
 | **1** | WebSocket basics: a real-time chat | ✅ Done |
 | **2** | Rooms and private messages | ✅ Done |
-| **3** | Saving messages and showing history | 🔜 Next |
-| **4** | Users and authentication | ⏳ Planned |
+| **3** | Saving messages and showing history | ✅ Done |
+| **4** | Users and authentication | 🔜 Next |
 | **5** | Reliability: reconnecting and heartbeats | ⏳ Planned |
 | **6** | Deploying online over secure `wss://` | ⏳ Planned |
 
@@ -47,13 +47,23 @@ What I learned:
 - On the page, each conversation gets its **own message list** and an unread counter, so switching between rooms and private chats doesn't mix messages up.
 - A connection can drop without a proper goodbye (wifi cuts out, laptop closes). The server catches `ConnectionClosed` so that's handled quietly instead of logging an error.
 
-### Phase 3: Message history 🔜
+### Phase 3: Message history ✅
 
-- Store messages in a database such as SQLite.
-- Send recent history to people when they join.
-- Load older messages when you scroll up.
+**Goal:** stop losing every message when the server restarts, and show newcomers what was said before they arrived.
 
-### Phase 4: Users and authentication ⏳
+What I learned:
+
+- Until now the server kept everything in memory, so a restart wiped it. A **database** keeps data in a file on disk. **SQLite** is built into Python and stores the whole database in one file, `chat.db`.
+- Splitting code into files by job: `db.py` only knows about storage, and `server.py` only knows about connections. The server just calls `db.save_message(...)` and `db.get_history(...)`.
+- Creating a table with `CREATE TABLE IF NOT EXISTS`, so the first run sets it up and later runs leave it alone.
+- Always passing values with `?` placeholders instead of building SQL with f-strings. Otherwise a message could contain SQL that the database runs (**SQL injection**).
+- An **index** on `(room, id)` makes "the latest 50 messages in this room" fast, because SQLite doesn't have to read every message.
+- **Pagination:** sending 50 messages at a time, and when you scroll up, asking for "50 messages older than this id". Fetching 51 rows tells the server whether there are more to load.
+- Save first, then send. The saved copy gets an id and a timestamp from the server, so everyone sees the same time and the page can ask for older messages by id.
+- Adding older messages at the top without the page jumping, by measuring the scroll height before and after.
+- Saved data needs a **stable identity**. My messages were matched to me by connection id, which changes on every reload, so after a restart all my old messages showed up on the wrong side. Each tab now keeps its own id in `sessionStorage` and sends it when it joins.
+
+### Phase 4: Users and authentication 🔜
 
 - Sign up and log in, so display names can't be faked.
 - Authenticate the WebSocket connection with a token.
@@ -74,6 +84,13 @@ What I learned:
 ---
 
 ## Features
+
+### Added in Phase 3
+
+- **Saved history.** Messages are stored in `chat.db` and survive a server restart.
+- **History on join.** Entering a room shows its last 50 messages.
+- **Load older messages.** Scroll to the top of a room to load the 50 before that, until you reach "This is the start of #room".
+- **Real send times.** Times come from the server, and messages from an earlier day show the date too.
 
 ### Added in Phase 2
 
@@ -99,7 +116,8 @@ What I learned:
 ```
 .
 ├── index.html        # The chat client (HTML, CSS and JavaScript in one file)
-├── server.py         # The WebSocket server
+├── server.py         # The WebSocket server: connections and routing
+├── db.py             # Saving and loading messages (SQLite)
 └── requirements.txt  # Python dependencies
 ```
 
@@ -143,11 +161,13 @@ The server keeps every open connection in memory along with that person's `id`, 
 | Direction | `type` | Purpose |
 |---|---|---|
 | Server → client | `welcome` | Gives the client its unique `id`, so it can tell its own messages apart |
-| Client → server | `join` | Join a room: `{ "type": "join", "room": "general", "name": "..." }`. Also sent once when the page connects |
-| Server → client | `joined` | Confirms the room (with its cleaned-up name). The page switches to it |
+| Client → server | `join` | Join a room: `{ "type": "join", "room": "general", "name": "...", "client_id": "..." }`. Also sent once when the page connects. `client_id` is the tab's own id, kept across reloads, so your saved messages still show as yours |
+| Server → client | `joined` | Confirms the room (with its cleaned-up name) and your `id`. The page switches to it |
 | Client → server | `rename` | Change your display name: `{ "type": "rename", "name": "..." }` |
 | Client → server | `chat` | Sends a message to your current room: `{ "type": "chat", "text": "..." }` |
-| Server → room | `chat` | Passes it on to everyone in that room, with the sender's `id`, `name` and the `room` |
+| Server → room | `chat` | The saved message, sent to everyone in that room: sender's `id` and `name`, `room`, `text`, plus its `msg_id` and `sent_at` time |
+| Server → client | `history` | Saved messages from a room, oldest first: `{ "room", "messages": [...], "more": true/false, "older": true/false }`. Sent after `joined`, and in answer to `load_more` |
+| Client → server | `load_more` | Ask for older messages: `{ "type": "load_more", "before": <oldest msg_id you have> }` |
 | Client → server | `dm` | Private message: `{ "type": "dm", "to": "<their id>", "text": "..." }` |
 | Server → 2 people | `dm` | Sent to the recipient and back to the sender, with `id`, `name`, `to` and `text` |
 | Client → server | `typing` | "I'm typing", at most once per second. Add `"to": "<id>"` when typing in a private chat |
@@ -169,9 +189,8 @@ The project deliberately keeps things simple. These gaps are what the next phase
 
 | Limitation | Fixed in |
 |---|---|
-| Messages aren't saved, so they're lost on restart and you see no history when you join a room | Phase 3 |
-| You're in one room at a time, so you miss what's said in other rooms while you're away | Phase 3 |
 | No accounts, so anyone can use any display name (two people can both be "Alex") | Phase 4 |
+| Private messages aren't saved, because they're tied to a connection id that changes on every reload | Phase 4 |
 | If the connection drops, you have to reload the page, which starts a new identity and loses your private chats | Phase 5 |
 | Only runs on `localhost` | Phase 6 |
 
