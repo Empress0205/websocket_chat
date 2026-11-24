@@ -158,16 +158,35 @@ What I learned:
 
 ## Project structure
 
+The project is split into a **backend** (the Python server) and a **frontend** (the page in the browser). They only talk to each other over the WebSocket.
+
 ```
 .
-├── index.html        # The chat client (HTML, CSS and JavaScript in one file)
-├── server.py         # The WebSocket server: connections and routing
-├── db.py             # Saving and loading users, logins and messages (SQLite)
-├── auth.py           # Password hashing, login tokens, username and password rules
-├── ratelimit.py      # Stops anyone sending too much, too fast
-├── manage.py         # Admin tasks from the command line (make-admin, users, rooms)
-└── requirements.txt  # Python dependencies
+├── backend/
+│   ├── server.py          # The WebSocket server: connections and routing
+│   ├── db.py              # Saving and loading users, logins, rooms and messages (SQLite)
+│   ├── auth.py            # Password hashing, login tokens, username and password rules
+│   ├── ratelimit.py       # Stops anyone sending too much, too fast
+│   ├── manage.py          # Admin tasks from the command line
+│   ├── requirements.txt   # Python dependencies
+│   └── chat.db            # The database (created on first run, never committed)
+└── frontend/
+    ├── index.html         # The page layout only
+    ├── css/style.css      # All the styling
+    └── js/
+        ├── main.js            # The starting point: index.html loads only this
+        ├── state.js           # Shared values (who am I, which chat is open, ...)
+        ├── connection.js      # The WebSocket: connecting, reconnecting, heartbeat
+        ├── handlers.js        # What to do with each message from the server
+        ├── conversations.js   # Message lists, history, read receipts
+        ├── sidebar.js         # Rooms and people
+        ├── login.js           # The log-in screen
+        ├── admin.js           # The Admin panel
+        ├── typing.js          # "... is typing"
+        └── composer.js        # The message box and Send button
 ```
+
+The JavaScript files are **ES modules**: each one says what it `export`s, and what it `import`s from the others, so it's clear how they depend on each other.
 
 ## Getting started
 
@@ -179,12 +198,13 @@ What I learned:
 ### 1. Install dependencies
 
 ```bash
-pip install -r requirements.txt
+pip install -r backend/requirements.txt
 ```
 
 ### 2. Start the server
 
 ```bash
+cd backend
 python server.py
 ```
 
@@ -196,7 +216,7 @@ WebSocket server running at ws://localhost:8765
 
 ### 3. Create the first admin
 
-There's no sign-up page: accounts are created by an admin. Create the first one in a terminal on the server's computer:
+There's no sign-up page: accounts are created by an admin. Create the first one in a second terminal, also in the `backend` folder:
 
 ```bash
 python manage.py create-user <username>      # asks for a password
@@ -205,11 +225,16 @@ python manage.py make-admin <username>
 
 ### 4. Open the chat
 
-Open `index.html` in your browser (double-clicking it works) and log in as the admin. Click *Admin* in the sidebar to create accounts for other people and private rooms for them. Log in as someone else in a second tab, and click a name under *Online* to send a private message.
+The page uses JavaScript modules, which browsers only load over `http://`, so **double-clicking `index.html` won't work**. Serve the `frontend` folder instead:
+
+- **VS Code:** click *Go Live* (Live Server extension). The project's `.vscode/settings.json` already points it at `frontend/` and tells it to ignore the database.
+- **Or any terminal:** `python -m http.server 8000 --directory frontend`, then open http://localhost:8000.
+
+Log in as the admin. Click *Admin* in the sidebar to create accounts for other people and private rooms for them. Log in as someone else in a second tab, and click a name under *People* to send a private message.
 
 Other commands: `python manage.py set-password <username>`, `python manage.py users` and `python manage.py rooms`.
 
-> If you still have the Phase 1 server running, stop it first (Ctrl+C in its terminal). Otherwise the new one can't use port 8765.
+> Only one server can use port 8765 at a time. If `python server.py` says the address is already in use, an older server is still running: stop it with Ctrl+C in its terminal.
 
 ## How it works
 
@@ -253,8 +278,8 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 
 By default the server listens on `localhost:8765` and the page connects to `ws://localhost:8765`. To change this:
 
-- **Server:** edit the host and port in `main()` in `server.py`.
-- **Client:** edit the URL in `new WebSocket(...)` in `index.html`.
+- **Server:** edit the host and port in `main()` in `backend/server.py`.
+- **Client:** edit `SERVER_URL` at the top of `frontend/js/connection.js`.
 
 ## Known limitations and when they get fixed
 
