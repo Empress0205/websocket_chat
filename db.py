@@ -76,6 +76,17 @@ def init_db(path=DB_PATH):
             PRIMARY KEY (room, user_id)
         )
     """)
+    # Phase 5: how far each person has read in each conversation (a room name,
+    # or a private chat's "dm:1:2" key). Unread badges, messages waiting for
+    # someone who was offline, and read receipts all come from this one table.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS reads (
+            user_id   INTEGER NOT NULL REFERENCES users (id),
+            conv      TEXT NOT NULL,
+            last_read INTEGER NOT NULL,
+            PRIMARY KEY (user_id, conv)
+        )
+    """)
     # Everyone shares #general.
     _conn.execute("INSERT OR IGNORE INTO rooms (name, is_public, created_at) VALUES ('general', 1, ?)",
                   (_now().isoformat(timespec="seconds"),))
@@ -99,6 +110,10 @@ def create_user(username, password_hash):
         return None
     _conn.commit()
     return cur.lastrowid
+
+
+def get_user(user_id):
+    return _conn.execute("SELECT * FROM users WHERE id = ?", (int(user_id),)).fetchone()
 
 
 def get_user_by_name(username):
@@ -220,6 +235,62 @@ def dm_key(user_a, user_b):
     """
     a, b = sorted([int(user_a), int(user_b)])
     return f"dm:{a}:{b}"
+
+
+# --- Reading: unread counts and read receipts (Phase 5) ---
+
+def mark_read(user_id, conv, msg_id):
+    """
+    Remember that a user has read up to `msg_id` in a conversation.
+    Returns True if that moved them forward (so others should be told).
+    """
+    row = _conn.execute("SELECT last_read FROM reads WHERE user_id = ? AND conv = ?",
+                        (int(user_id), conv)).fetchone()
+    if row and row["last_read"] >= msg_id:
+        return False
+    # An "upsert": insert the row, or update it if it's already there.
+    _conn.execute("""
+        INSERT INTO reads (user_id, conv, last_read) VALUES (?, ?, ?)
+        ON CONFLICT (user_id, conv) DO UPDATE SET last_read = excluded.last_read
+    """, (int(user_id), conv, msg_id))
+    _conn.commit()
+    return True
+
+
+def last_read(user_id, conv):
+    row = _conn.execute("SELECT last_read FROM reads WHERE user_id = ? AND conv = ?",
+                        (int(user_id), conv)).fetchone()
+    return row["last_read"] if row else 0
+
+
+def reads_in(conv):
+    """Everyone's read position in a conversation: [{id, name, last}]."""
+    return [{"id": str(r["user_id"]), "name": r["username"], "last": r["last_read"]}
+            for r in _conn.execute(
+                "SELECT r.user_id, u.username, r.last_read FROM reads r "
+                "JOIN users u ON u.id = r.user_id WHERE r.conv = ?", (conv,))]
+
+
+def unread_counts(user_id, rooms):
+    """
+    How many messages are waiting for this user, per conversation: the rooms
+    they may enter, plus every private chat they're part of. Messages they sent
+    themselves don't count.
+    """
+    uid = str(int(user_id))
+    counts = {}
+    query = ("SELECT m.room, COUNT(*) AS n FROM messages m "
+             "LEFT JOIN reads r ON r.user_id = ? AND r.conv = m.room "
+             "WHERE m.sender_id != ? AND m.id > COALESCE(r.last_read, 0) AND ")
+    for room in rooms:
+        row = _conn.execute(query + "m.room = ? GROUP BY m.room", (int(uid), uid, room)).fetchone()
+        if row:
+            counts[room] = row["n"]
+    # Private chats this user is in: dm:<uid>:<other> or dm:<other>:<uid>.
+    for row in _conn.execute(query + "(m.room LIKE ? OR m.room LIKE ?) GROUP BY m.room",
+                             (int(uid), uid, f"dm:{uid}:%", f"dm:%:{uid}")):
+        counts[row["room"]] = row["n"]
+    return counts
 
 
 def save_message(room, sender_id, sender_name, text):
