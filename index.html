@@ -77,14 +77,64 @@
       font-size: 0.7rem; font-weight: 600; flex-shrink: 0;
     }
     .empty { font-size: 0.8rem; color: #9ca3af; padding: 4px 16px; }
-    #new-room {
-      margin: 6px 16px 0;
-      padding: 6px 10px;
-      border: 1px solid #e6e9ee;
+    .hidden { display: none !important; }
+    #manage-rooms {
+      margin: 12px 16px 16px;
+      padding: 8px 10px;
+      border: 1px dashed #93c5fd;
       border-radius: 8px;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-weight: 600;
       font-size: 0.85rem;
-      width: calc(100% - 32px);
+      cursor: pointer;
     }
+    #manage-rooms:hover { background: #dbeafe; }
+
+    /* Admin panel: create private rooms and choose who may enter them */
+    #admin {
+      position: fixed; inset: 0; z-index: 9;
+      background: rgba(17, 24, 39, 0.35);
+      display: flex; align-items: center; justify-content: center;
+    }
+    .admin-card {
+      width: 100%; max-width: 460px; max-height: 80vh; overflow-y: auto;
+      background: #fff; border-radius: 16px; padding: 22px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .admin-head { display: flex; align-items: center; justify-content: space-between; }
+    .admin-head h2 { margin: 0; font-size: 1.1rem; }
+    #admin-close { border: none; background: none; font-size: 1.4rem; cursor: pointer; color: #6b7280; }
+    .row-form { display: flex; gap: 8px; }
+    .row-form input {
+      flex: 1; min-width: 0; padding: 8px 10px;
+      border: 1px solid #e6e9ee; border-radius: 8px; font-size: 0.9rem;
+    }
+    .row-form button {
+      padding: 0 14px; border: none; border-radius: 8px;
+      background: #3b82f6; color: #fff; font-weight: 600; cursor: pointer;
+    }
+    .admin-room { border: 1px solid #e6e9ee; border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .admin-room-name { font-weight: 600; }
+    .admin-room-name span { font-weight: 400; color: #9ca3af; font-size: 0.8rem; margin-left: 6px; }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 4px;
+      background: #eef2ff; color: #3730a3; border-radius: 999px;
+      padding: 3px 4px 3px 10px; font-size: 0.8rem;
+    }
+    .chip button { border: none; background: none; color: #6366f1; cursor: pointer; font-size: 0.95rem; line-height: 1; }
+    .muted { color: #9ca3af; font-size: 0.8rem; }
+    /* Small outline lock for private rooms; it takes the colour of the text around it */
+    .lock { width: 12px; height: 12px; margin-right: 5px; vertical-align: -1px; opacity: 0.75; }
+    .row-form select {
+      flex: 1; min-width: 0; padding: 8px 10px;
+      border: 1px solid #e6e9ee; border-radius: 8px; font-size: 0.9rem; background: #fff;
+    }
+    #admin-msg { margin: 0; align-self: stretch; }
+    .admin-sub { margin: 4px 0 -4px; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; }
+    #admin-rooms { display: flex; flex-direction: column; gap: 10px; }
 
     /* Chat panel */
     .chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -102,13 +152,61 @@
     .dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
     .dot.on { background: #22c55e; }
     .dot.off { background: #ef4444; }
-    #name {
-      width: 120px;
+    .me { font-size: 0.8rem; color: #6b7280; white-space: nowrap; }
+    .me b { color: #111827; }
+    #logout {
       padding: 6px 10px;
       border: 1px solid #e6e9ee;
       border-radius: 8px;
-      font-size: 0.85rem;
+      background: #fff;
+      font-size: 0.8rem;
+      cursor: pointer;
     }
+    #logout:hover { background: #f3f5f8; }
+
+    /* Log-in / sign-up screen, shown over the chat until you're logged in */
+    #login {
+      position: fixed;
+      inset: 0;
+      background: rgba(238, 241, 245, 0.96);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+    }
+    #login.hidden { display: none; }
+    .login-card {
+      width: 100%;
+      max-width: 340px;
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .login-card h2 { margin: 0 0 4px; font-size: 1.2rem; }
+    .login-card input {
+      padding: 10px 12px;
+      border: 1px solid #e6e9ee;
+      border-radius: 10px;
+      font-size: 0.95rem;
+    }
+    .login-card input:focus { outline: none; border-color: #3b82f6; }
+    #login-submit {
+      padding: 10px;
+      border: none;
+      border-radius: 10px;
+      background: #3b82f6;
+      color: #fff;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+    }
+    #login-submit:disabled { background: #93c5fd; cursor: default; }
+    .hint { font-size: 0.8rem; color: #9ca3af; margin: 0; text-align: center; }
+    #login-error { font-size: 0.85rem; color: #b91c1c; min-height: 1.2em; margin: 0; }
 
     /* Message lists: one per conversation, only the active one is shown */
     #logs { flex: 1; position: relative; background: #f8fafc; }
@@ -221,17 +319,20 @@
     <aside class="sidebar">
       <h2>Rooms</h2>
       <ul class="list" id="rooms"></ul>
-      <input id="new-room" placeholder="+ Join or create a room" autocomplete="off">
 
       <h2>Online</h2>
       <ul class="list" id="users"></ul>
+
+      <!-- Only admins see this button -->
+      <button id="manage-rooms" class="hidden">Admin</button>
     </aside>
 
     <section class="chat">
       <div class="header">
         <h1 id="title">general</h1>
         <div class="status"><span class="dot" id="dot"></span><span id="status">Connecting…</span></div>
-        <input id="name" placeholder="Your name" value="Guest" maxlength="30">
+        <span class="me">Signed in as <b id="me-name"></b></span>
+        <button id="logout">Log out</button>
       </div>
 
       <div id="logs"></div>
@@ -244,8 +345,48 @@
     </section>
   </div>
 
+  <!-- Admin panel (only admins can open it, and the server checks again) -->
+  <div id="admin" class="hidden">
+    <div class="admin-card">
+      <div class="admin-head">
+        <h2>Admin</h2>
+        <button id="admin-close" title="Close">&times;</button>
+      </div>
+      <h3 class="admin-sub">Accounts</h3>
+      <form class="row-form" id="create-user">
+        <input id="new-username" placeholder="Username" maxlength="20" autocomplete="off">
+        <input id="new-password" placeholder="Starting password" maxlength="128" autocomplete="new-password">
+        <button>Create</button>
+      </form>
+      <p class="muted">3 to 20 letters, digits or _. Password at least 8 characters. Give the person their password yourself.</p>
+
+      <h3 class="admin-sub">Rooms</h3>
+      <form class="row-form" id="create-room">
+        <input id="create-room-name" placeholder="New private room, e.g. bank-x" maxlength="20" autocomplete="off">
+        <button>Create</button>
+      </form>
+      <!-- Kept outside #admin-rooms, so redrawing the list doesn't wipe the message -->
+      <p id="admin-msg" class="info hidden"></p>
+      <div id="admin-rooms"></div>
+    </div>
+  </div>
+
+  <!-- Phase 4: nothing works until you log in -->
+  <div id="login">
+    <form class="login-card" id="login-form">
+      <h2>WebSocket Chat</h2>
+      <input id="username" placeholder="Username" autocomplete="username" maxlength="20" required>
+      <input id="password" type="password" placeholder="Password" autocomplete="current-password" maxlength="128" required>
+      <button id="login-submit" disabled>Log in</button>
+      <p id="login-error"></p>
+      <p class="hint">No account? Accounts are created by your admin.</p>
+    </form>
+  </div>
+
   <script>
-    const DEFAULT_ROOMS = ["general", "random", "help"];
+    // The rooms we may enter come from the server after we log in.
+    let myRooms = [];   // [{ name, public }]
+    let isAdmin = false;
 
     const logs = document.getElementById("logs");
     const titleEl = document.getElementById("title");
@@ -253,23 +394,13 @@
     const dot = document.getElementById("dot");
     const sendBtn = document.getElementById("send");
     const textInput = document.getElementById("text");
-    const nameInput = document.getElementById("name");
     const roomsList = document.getElementById("rooms");
     const usersList = document.getElementById("users");
-    const newRoomInput = document.getElementById("new-room");
 
-    // The server tells us our own id in a "welcome" message.
-    // We compare it with each message's id to decide left or right.
+    // Our user id and name come from our account once we log in.
+    // We compare the id with each message's id to decide left or right.
     let myId = null;
-
-    // An id for this browser tab that survives reloads (sessionStorage is kept
-    // per tab until the tab is closed). The server uses it as our id, so the
-    // messages we sent before a reload still show up on our side.
-    let clientId = sessionStorage.getItem("chatClientId");
-    if (!clientId) {
-      clientId = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
-      sessionStorage.setItem("chatClientId", clientId);
-    }
+    let myName = null;
     let currentRoom = null;   // the room the server has us in
     let users = [];           // everyone online: [{ id, name, room }]
 
@@ -287,7 +418,7 @@
         log.className = "log" + (key.startsWith("dm:") ? " dm-log" : "");
         logs.appendChild(log);
         // oldestId / hasMore / loading are for "scroll up to load older messages".
-        c = { log, lastSenderId: null, unread: 0, name, oldestId: null, hasMore: false, loading: false };
+        c = { log, lastSenderId: null, unread: 0, name, oldestId: null, hasMore: false, loading: false, historyAsked: false };
         conversations.set(key, c);
         log.addEventListener("scroll", () => maybeLoadOlder(key));
       }
@@ -299,6 +430,11 @@
       activeKey = key;
       const c = getConversation(key);
       c.unread = 0;
+      // The first time a private chat is opened, ask for what was said before.
+      if (key.startsWith("dm:") && !c.historyAsked) {
+        c.historyAsked = true;
+        sendJSON({ type: "dm_history", with: key.slice(3) });
+      }
       for (const other of conversations.values()) other.log.classList.toggle("active", other === c);
       scrollToBottom(c);
       renderTitle();
@@ -328,7 +464,6 @@
       }
     }
 
-    function myName() { return nameInput.value.trim() || "Guest"; }
 
     // The server stamps every message with the time it was sent (in UTC).
     // Show just the time for today's messages, and the date too for older ones.
@@ -401,7 +536,8 @@
     }
 
     function showHistory(msg) {
-      const c = getConversation("room:" + msg.room);
+      // History is either for a room or for a private chat with one person.
+      const c = getConversation(msg.dm ? "dm:" + msg.dm : "room:" + msg.room);
       c.loading = false;
       c.hasMore = msg.more;
       if (msg.messages.length) c.oldestId = msg.messages[0].msg_id;
@@ -423,17 +559,19 @@
       if (!c.hasMore && msg.messages.length) {
         const start = document.createElement("div");
         start.className = "info";
-        start.textContent = "This is the start of #" + msg.room;
+        start.textContent = msg.dm ? "This is the start of your private chat with " + c.name : "This is the start of #" + msg.room;
         c.log.prepend(start);
       }
     }
 
-    // When the user scrolls near the top of a room, ask for older messages.
+    // When the user scrolls near the top of a conversation, ask for older messages.
     function maybeLoadOlder(key) {
       const c = conversations.get(key);
-      if (!key.startsWith("room:") || !c.hasMore || c.loading || c.log.scrollTop > 40) return;
+      if (!c.hasMore || c.loading || c.log.scrollTop > 40) return;
       c.loading = true;
-      sendJSON({ type: "load_more", before: c.oldestId });
+      sendJSON(key.startsWith("dm:")
+        ? { type: "load_more", before: c.oldestId, with: key.slice(3) }
+        : { type: "load_more", before: c.oldestId });
     }
 
     function addInfo(key, text, isError = false) {
@@ -447,7 +585,32 @@
     }
 
     // --- Sidebar ---
-    function makeItem(label, { active, meta, badge, avatar, onClick }) {
+    // A small outline padlock, drawn with SVG so it matches the text colour.
+    function lockIcon() {
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("viewBox", "0 0 16 16");
+      svg.setAttribute("class", "lock");
+      svg.setAttribute("aria-label", "private");
+      for (const d of ["M4 7h8v7H4z", "M5.5 7V5a2.5 2.5 0 0 1 5 0v2"]) {
+        const path = document.createElementNS(ns, "path");
+        path.setAttribute("d", d);
+        path.setAttribute("fill", "none");
+        path.setAttribute("stroke", "currentColor");
+        path.setAttribute("stroke-width", "1.5");
+        path.setAttribute("stroke-linejoin", "round");
+        svg.appendChild(path);
+      }
+      return svg;
+    }
+
+    // Public rooms get a "#", private ones the lock.
+    function roomLabel(el, name, isPublic) {
+      el.textContent = isPublic ? "# " + name : name;
+      if (!isPublic) el.prepend(lockIcon());
+    }
+
+    function makeItem(label, { active, meta, badge, avatar, onClick, isPrivate }) {
       const li = document.createElement("li");
       li.className = "item" + (active ? " active" : "");
       if (avatar) {
@@ -459,6 +622,7 @@
       const l = document.createElement("span");
       l.className = "label";
       l.textContent = label;
+      if (isPrivate) l.prepend(lockIcon());
       li.appendChild(l);
       if (badge) {
         const b = document.createElement("span");
@@ -476,13 +640,13 @@
     }
 
     function renderSidebar() {
-      // Rooms: the default ones, plus any room someone is in right now.
-      const rooms = [...new Set([...DEFAULT_ROOMS, ...users.map(u => u.room), currentRoom].filter(Boolean))];
+      // Rooms: only the ones the server says we may enter.
       roomsList.textContent = "";
-      for (const room of rooms) {
+      for (const { name: room, public: isPublic } of myRooms) {
         const key = "room:" + room;
         const count = users.filter(u => u.room === room).length;
-        roomsList.appendChild(makeItem("# " + room, {
+        roomsList.appendChild(makeItem(isPublic ? "# " + room : room, {
+          isPrivate: !isPublic,
           active: key === activeKey,
           meta: count ? String(count) : "",
           badge: conversations.get(key)?.unread || 0,
@@ -504,7 +668,7 @@
         usersList.appendChild(makeItem(u.name, {
           active: key === activeKey,
           avatar: u.name.charAt(0).toUpperCase(),
-          meta: "#" + u.room,
+          meta: u.room ? "#" + u.room : "", // hidden if it's a private room we can't enter
           badge: conversations.get(key)?.unread || 0,
           onClick: () => {
             getConversation(key, u.name);
@@ -527,29 +691,81 @@
       if (room === currentRoom) {
         openConversation("room:" + room);
       } else {
-        sendJSON({ type: "join", room, name: myName() }); // the server replies with "joined"
+        sendJSON({ type: "join", room }); // the server replies with "joined"
       }
     }
 
-    // 2. Runs once, when the connection is ready. Join the default room.
+    // --- Logging in (Phase 4) ---
+    // After logging in, the server gives us a token. We keep it in
+    // sessionStorage (this tab only, until the tab closes), so a reload logs us
+    // straight back in without typing the password again.
+    const loginScreen = document.getElementById("login");
+    const loginForm = document.getElementById("login-form");
+    const loginError = document.getElementById("login-error");
+    const loginSubmit = document.getElementById("login-submit");
+    const usernameInput = document.getElementById("username");
+    const passwordInput = document.getElementById("password");
+
+    function showLogin(error = "") {
+      loginScreen.classList.remove("hidden");
+      loginError.textContent = error;
+      loginSubmit.disabled = socket.readyState !== WebSocket.OPEN;
+      usernameInput.focus();
+    }
+
+    loginForm.onsubmit = (e) => {
+      e.preventDefault(); // stop the browser reloading the page like a normal form
+      loginError.textContent = "";
+      loginSubmit.disabled = true;
+      sendJSON({ type: "login", username: usernameInput.value.trim(), password: passwordInput.value });
+    };
+
+    document.getElementById("logout").onclick = () => sendJSON({ type: "logout" });
+
+    // 2. Runs once, when the connection is ready: log back in, or show the login screen.
     socket.onopen = () => {
       statusText.textContent = "Connected";
       dot.className = "dot on";
-      sendBtn.disabled = false;
-      sendJSON({ type: "join", room: "general", name: myName(), client_id: clientId });
+      const token = sessionStorage.getItem("chatToken");
+      if (token) {
+        sendJSON({ type: "resume", token });
+      } else {
+        showLogin();
+      }
     };
 
     // 3. Runs every time the server sends us something, at any moment.
     socket.onmessage = (event) => {
       const msg = JSON.parse(event.data);
 
-      if (msg.type === "welcome") {
-        myId = msg.id;
+      if (msg.type === "auth_ok") {
+        // Logged in. Keep the token (only sent on a fresh login) and join a room.
+        if (msg.token) sessionStorage.setItem("chatToken", msg.token);
+        myId = msg.user.id;
+        myName = msg.user.name;
+        document.getElementById("me-name").textContent = myName;
+        loginScreen.classList.add("hidden");
+        passwordInput.value = "";
+        sendBtn.disabled = false;
+        // Go back to the room this tab was in before a reload (the server
+        // checks access and falls back to #general if it's not allowed).
+        sendJSON({ type: "join", room: sessionStorage.getItem("chatRoom") || "general" });
+
+      } else if (msg.type === "auth_error") {
+        // A saved token that no longer works is useless: forget it.
+        sessionStorage.removeItem("chatToken");
+        showLogin(msg.text);
+
+      } else if (msg.type === "signed_out") {
+        // We logged out, or logged in from another tab. The server closes the
+        // connection next, and onclose shows the login screen.
+        sessionStorage.removeItem("chatToken");
+        signedOutText = msg.text;
 
       } else if (msg.type === "joined") {
         // The server moved us into a room (it may have cleaned up the name).
         currentRoom = msg.room;
-        myId = msg.id; // the server confirms which id we have
+        sessionStorage.setItem("chatRoom", msg.room); // remembered across reloads
         openConversation("room:" + msg.room);
 
       } else if (msg.type === "history") {
@@ -578,16 +794,147 @@
         renderSidebar();
         renderTitle();
 
+      } else if (msg.type === "rooms") {
+        // The rooms we may enter. Sent after logging in and whenever an admin changes them.
+        myRooms = msg.rooms;
+        isAdmin = msg.admin;
+        document.getElementById("manage-rooms").classList.toggle("hidden", !isAdmin);
+        renderSidebar();
+
+      } else if (msg.type === "admin_rooms") {
+        renderAdmin(msg.rooms, msg.users);
+
+      } else if (msg.type === "notice") {
+        if (!adminPanel.classList.contains("hidden")) adminError(msg.text, false);
+        else if (activeKey) addInfo(activeKey, msg.text);
+
       } else if (msg.type === "error") {
-        if (activeKey) addInfo(activeKey, msg.text, true);
+        if (!adminPanel.classList.contains("hidden")) adminError(msg.text);
+        else if (activeKey) addInfo(activeKey, msg.text, true);
       }
     };
 
+    // --- Admin panel ---
+    // The page only shows the panel to admins, but that's just convenience:
+    // the server checks admin rights again on every admin_* message.
+    const adminPanel = document.getElementById("admin");
+    const adminRooms = document.getElementById("admin-rooms");
+    const adminMsg = document.getElementById("admin-msg");
+
+    // Send an admin action, clearing the last message first.
+    function adminSend(obj) {
+      adminMsg.classList.add("hidden");
+      sendJSON(obj);
+    }
+
+    document.getElementById("manage-rooms").onclick = () => {
+      adminPanel.classList.remove("hidden");
+      adminSend({ type: "admin_list" });
+    };
+    document.getElementById("admin-close").onclick = () => adminPanel.classList.add("hidden");
+
+    document.getElementById("create-room").onsubmit = (e) => {
+      e.preventDefault();
+      const input = document.getElementById("create-room-name");
+      if (input.value.trim()) adminSend({ type: "admin_create_room", name: input.value.trim() });
+      input.value = "";
+    };
+
+    function adminError(text, isError = true) {
+      adminMsg.textContent = text;
+      adminMsg.classList.toggle("error", isError);
+      adminMsg.classList.remove("hidden");
+    }
+
+    document.getElementById("create-user").onsubmit = (e) => {
+      e.preventDefault();
+      const username = document.getElementById("new-username");
+      const password = document.getElementById("new-password");
+      adminSend({ type: "admin_create_user", username: username.value.trim(), password: password.value });
+      username.value = "";
+      password.value = "";
+    };
+
+    // `allUsers` is every account's username, for the "add a member" dropdown.
+    function renderAdmin(rooms, allUsers) {
+      adminRooms.textContent = "";
+      for (const room of rooms) {
+        const box = document.createElement("div");
+        box.className = "admin-room";
+
+        const title = document.createElement("div");
+        title.className = "admin-room-name";
+        roomLabel(title, room.name, room.public);
+        const kind = document.createElement("span");
+        kind.textContent = room.public ? "public, everyone can enter" : "private";
+        title.appendChild(kind);
+        box.appendChild(title);
+
+        if (!room.public) {
+          // Members, each with a remove button.
+          const chips = document.createElement("div");
+          chips.className = "chips";
+          if (room.members.length === 0) {
+            const none = document.createElement("span");
+            none.className = "muted";
+            none.textContent = "No members yet. Only admins can enter.";
+            chips.appendChild(none);
+          }
+          for (const member of room.members) {
+            const chip = document.createElement("span");
+            chip.className = "chip";
+            chip.textContent = member;
+            const x = document.createElement("button");
+            x.textContent = "\u00d7";
+            x.title = "Remove " + member;
+            x.onclick = () => adminSend({ type: "admin_remove_member", room: room.name, username: member });
+            chip.appendChild(x);
+            chips.appendChild(chip);
+          }
+          box.appendChild(chips);
+
+          // Add someone: pick from the accounts that aren't members yet,
+          // so a typo can't send a name that doesn't exist.
+          const candidates = allUsers.filter(u => !room.members.includes(u));
+          if (candidates.length === 0) {
+            const all = document.createElement("span");
+            all.className = "muted";
+            all.textContent = "Every account is already a member.";
+            box.appendChild(all);
+          } else {
+            const form = document.createElement("form");
+            form.className = "row-form";
+            const select = document.createElement("select");
+            const placeholder = new Option("Choose someone to add…", "");
+            placeholder.disabled = true;
+            placeholder.selected = true;
+            select.appendChild(placeholder);
+            for (const u of candidates) select.appendChild(new Option(u, u));
+            const add = document.createElement("button");
+            add.textContent = "Add";
+            form.append(select, add);
+            form.onsubmit = (e) => {
+              e.preventDefault();
+              if (select.value) adminSend({ type: "admin_add_member", room: room.name, username: select.value });
+              else adminError("Choose someone from the list first.");
+            };
+            box.appendChild(form);
+          }
+        }
+        adminRooms.appendChild(box);
+      }
+    }
+
     // 4. Runs if the connection closes (for example, the server stopped).
+    let signedOutText = null;
     socket.onclose = () => {
       statusText.textContent = "Disconnected";
       dot.className = "dot off";
       sendBtn.disabled = true;
+      if (signedOutText) {
+        // We were signed out on purpose: say so on the login screen.
+        showLogin(signedOutText + " Reload the page to log in again.");
+      }
     };
 
     // --- Typing indicator (receiving side) ---
@@ -644,16 +991,7 @@
     sendBtn.onclick = send;
     textInput.onkeydown = (e) => { if (e.key === "Enter") send(); };
 
-    // Tell the server when the name changes, so everyone's online list updates.
-    nameInput.onchange = () => sendJSON({ type: "rename", name: myName() });
-    nameInput.onkeydown = (e) => { if (e.key === "Enter") nameInput.blur(); };
 
-    newRoomInput.onkeydown = (e) => {
-      if (e.key !== "Enter") return;
-      const room = newRoomInput.value.trim();
-      if (room) switchRoom(room);
-      newRoomInput.value = "";
-    };
 
     // --- Typing indicator (sending side) ---
     // Sending on every keystroke would flood the server, so send at most once per second.
