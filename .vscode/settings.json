@@ -1,0 +1,18 @@
+{
+  // Live Server reloads the page whenever a file in this folder changes.
+  // The chat server writes to chat.db on every message, which would reload
+  // the page each time, so ignore the database files (plus Live Server's
+  // usual ignores).
+  "liveServer.settings.ignoreFiles": [
+    ".vscode/**",
+    "**/*.scss",
+    "**/*.sass",
+    "**/*.ts",
+    "**/chat.db",
+    "**/chat.db-journal",
+    "**/chat.db-wal",
+    "**/chat.db-shm",
+    "**/__pycache__/**",
+    "**/*.py"
+  ]
+}
