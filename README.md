@@ -2,7 +2,7 @@
 
 This repo records my progress learning **WebSockets**, from first principles up to a production-ready real-time app. It grows in phases, and each phase adds one new idea on top of the last.
 
-> **Current status: Phase 4 complete, a chat with accounts, rooms, private messages, an online list and saved history.**
+> **Current status: Phase 5 complete, a reliable chat with accounts, private rooms, saved history, read receipts and automatic reconnecting.**
 
 So far it's a Python WebSocket server and a single-page browser client, with no frameworks and no build step. Open the page in a few browser tabs, put them in different rooms, and message each other publicly or privately.
 
@@ -14,8 +14,8 @@ So far it's a Python WebSocket server and a single-page browser client, with no 
 | **2** | Rooms and private messages | ✅ Done |
 | **3** | Saving messages and showing history | ✅ Done |
 | **4** | Users and authentication | ✅ Done |
-| **5** | Reliability: reconnecting and heartbeats | 🔜 Next |
-| **6** | Deploying online over secure `wss://` | ⏳ Planned |
+| **5** | Reliability: reconnecting, heartbeats, offline messages, read receipts | ✅ Done |
+| **6** | Deploying online over secure `wss://` | 🔜 Next |
 
 ### Phase 1: WebSocket basics ✅
 
@@ -87,13 +87,24 @@ What I learned:
 - Admins are made with a **command-line tool** (`manage.py`) on the server, so nobody can make themselves an admin from the browser. Admin rights are checked in the database on every admin action, so removing them works immediately.
 - A small **database migration**: adding the `is_admin` column to an existing `users` table without losing any accounts.
 
-### Phase 5: Reliability 🔜
+### Phase 5: Reliability ✅
 
-- Reconnect automatically when the connection drops.
-- Use ping/pong heartbeats to detect dead connections.
-- Handle messages that were sent while a client was offline.
+**Goal:** keep working when the network or the server misbehaves, and never lose a message.
 
-### Phase 6: Deployment ⏳
+What I learned:
+
+- **Reconnecting with exponential backoff.** When the connection drops, the page waits about 1, 2, 4, 8, 16 and then 30 seconds between tries. Waiting longer each time avoids hammering a server that's struggling.
+- **Jitter:** each wait gets a random extra ±20%. Without it, a hundred pages would all reconnect at the same instant after a server restart.
+- The browser's `online` event tells the page the network is back, so it can reconnect at once instead of waiting.
+- **Heartbeats.** A connection can die silently (a laptop goes to sleep, wifi switches) and still look open. The `websockets` library pings every client every 20 seconds and drops the ones that don't answer. The page does the same from its side: it sends `ping` every 25 seconds, and if no `pong` comes back within 10 seconds it treats the connection as dead.
+- After reconnecting, the page logs in again with its token, rejoins the same room and fetches what it missed, so the user barely notices.
+- Disabling *Send* while disconnected, so a message can never be "sent" into nothing.
+- **One table, three features.** Remembering how far each person has read in each conversation gives unread badges after logging in, messages that wait for people who are offline, and read receipts.
+- **Read receipts** only count a message as seen when its conversation is open *and* the tab is visible (`document.visibilityState`).
+- An SQL **upsert** (`INSERT ... ON CONFLICT DO UPDATE`) to create or update a row in one step.
+- Limiting login attempts **per username**, not per connection, so reconnecting after every few guesses doesn't help an attacker. The trade-off: someone could lock a real user out for a while by guessing wrong on purpose.
+
+### Phase 6: Deployment 🔜
 
 - Host the server online and serve the page from the same place.
 - Use secure WebSockets (`wss://`) over HTTPS.
@@ -102,6 +113,14 @@ What I learned:
 ---
 
 ## Features
+
+### Added in Phase 5
+
+- **Automatic reconnecting.** If the connection drops, the header shows "Reconnecting in 4s…" with a yellow dot, and the page reconnects by itself, back in the same room and conversation.
+- **Dead connection detection.** Heartbeats on both sides notice a connection that died without closing.
+- **Messages to people who are offline.** The sidebar lists everyone with an account (a green dot means online). Message anyone; it waits for them.
+- **Unread badges after logging in.** Messages that arrived while you were away are counted per room and per private chat.
+- **Read receipts.** In private chats, one grey tick means sent and two blue ticks mean seen. In rooms, your latest message shows "Seen by ...".
 
 ### Added in Phase 4
 
@@ -211,15 +230,20 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Server → client | `joined` | Confirms the room (with its cleaned-up name). The page switches to it |
 | Client → server | `chat` | Sends a message to your current room: `{ "type": "chat", "text": "..." }` |
 | Server → room | `chat` | The saved message, sent to everyone in that room: sender's `id` and `name`, `room`, `text`, plus its `msg_id` and `sent_at` time |
-| Server → client | `history` | Saved messages, oldest first: `{ "room" or "dm", "messages": [...], "more": true/false, "older": true/false }`. Sent after `joined`, `dm_history` and `load_more` |
+| Server → client | `history` | Saved messages, oldest first: `{ "room" or "dm", "messages": [...], "more": true/false, "older": true/false }`, plus read receipts: `other_read` (private chat) or `reads` (room). Sent after `joined`, `dm_history` and `load_more` |
 | Client → server | `load_more` | Ask for older messages: `{ "type": "load_more", "before": <oldest msg_id you have> }`. Add `"with": "<user id>"` for a private chat |
 | Client → server | `dm` | Private message: `{ "type": "dm", "to": "<their user id>", "text": "..." }` |
-| Server → 2 people | `dm` | The saved message, sent to the recipient and back to the sender, with `id`, `name`, `to`, `text`, `msg_id` and `sent_at` |
+| Server → 2 people | `dm` | The saved message, sent to the recipient (if online) and back to the sender, with `id`, `name`, `to`, `text`, `msg_id` and `sent_at`. If the recipient is offline, it waits for them |
+| Client → server | `read` | "I've read up to here": `{ "type": "read", "msg_id": 42, "room": "general" }` or `"with": "<user id>"` for a private chat |
+| Server → room / 1 person | `seen` | Someone read up to `msg_id`: `{ "room", "id", "name", "msg_id" }` in a room, or `{ "with": "<reader id>", "msg_id" }` in a private chat |
+| Server → client | `unread` | After logging in: messages waiting per conversation, e.g. `{ "counts": { "room:general": 3, "dm:5": 1 } }` |
 | Client → server | `dm_history` | Opened a private chat: `{ "type": "dm_history", "with": "<user id>" }` |
 | Client → server | `typing` | "I'm typing", at most once per second. Add `"to": "<id>"` when typing in a private chat |
 | Server → room / 1 person | `typing` | Passed on to the room (with `room`) or to the private-chat partner (with `"dm": true`) |
 | Server → room | `info` | Join / leave notices for that room |
-| Server → each user | `users` | The online list: `[{ "id", "name", "room" }, ...]`. `room` is `null` when it's a private room you can't enter |
+| Server → each user | `users` | Who is online: `[{ "id", "name", "room" }, ...]`. `room` is `null` when it's a private room you can't enter |
+| Server → client | `people` | Everyone with an account: `[{ "id", "name" }, ...]`. Sent after logging in and when an admin creates an account |
+| Client → server / Server → client | `ping` / `pong` | The page's heartbeat, every 25 seconds. No `pong` within 10 seconds means the connection is dead |
 | Client → server | `admin_list` / `admin_create_user` / `admin_create_room` / `admin_add_member` / `admin_remove_member` | Admin only: list rooms, create an account (`username`, `password`), create a private room (`name`), or add or remove a member (`room`, `username`) |
 | Server → admin | `admin_rooms` | Every room with its members, and every username, for the *Admin* panel |
 | Server → client | `notice` | A plain notice, e.g. "You were given access to #bank-x." |
@@ -238,8 +262,6 @@ The project deliberately keeps things simple. These gaps are what the next phase
 
 | Limitation | Fixed in |
 |---|---|
-| If the connection drops, you have to reload the page | Phase 5 |
-| You can only send private messages to people who are online right now | Phase 5 |
 | Passwords travel unencrypted over `ws://`, which is only acceptable on your own computer | Phase 6 (`wss://`) |
 | Only runs on `localhost` | Phase 6 |
 
