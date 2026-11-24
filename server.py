@@ -1,5 +1,5 @@
 """
-A small WebSocket chat server with rooms and private messages.
+A small WebSocket chat server with rooms, private messages and message history.
 
 Run it with:   python server.py
 Then open index.html in two or more browser tabs and chat between them.
@@ -7,8 +7,11 @@ Then open index.html in two or more browser tabs and chat between them.
 import asyncio
 import json
 import re
+from datetime import datetime, timezone
 
 import websockets
+
+import db  # our own file: saves and loads messages (db.py)
 
 DEFAULT_ROOM = "general"
 MAX_NAME = 30
@@ -52,6 +55,12 @@ async def send_to_all(message: dict):
         await send(ws, message)
 
 
+def clean_client_id(value):
+    """A tab's own id: letters, digits and dashes only, at most 64 characters."""
+    value = str(value or "")
+    return value if re.fullmatch(r"[A-Za-z0-9-]{8,64}", value) else None
+
+
 def find_client(client_id):
     """Look up a connection by its id (used for private messages)."""
     for ws, info in clients.items():
@@ -70,16 +79,26 @@ async def send_user_list():
     await send_to_all({"type": "users", "users": users})
 
 
+async def send_history(ws, room, before_id=None):
+    """Send a batch of saved messages from a room to one client."""
+    messages, more = db.get_history(room, before_id)
+    await send(ws, {"type": "history", "room": room, "messages": messages,
+                    "more": more, "older": before_id is not None})
+
+
 async def join_room(ws, room):
     me = clients[ws]
     old = me["room"]
     if old == room:
-        await send(ws, {"type": "joined", "room": room, "name": me["name"]})
+        await send(ws, {"type": "joined", "room": room, "name": me["name"], "id": me["id"]})
+        await send_history(ws, room)
         return
     me["room"] = room
     if old is not None:
         await send_to_room(old, {"type": "info", "room": old, "text": f"{me['name']} left #{old}."})
-    await send(ws, {"type": "joined", "room": room, "name": me["name"]})
+    await send(ws, {"type": "joined", "room": room, "name": me["name"], "id": me["id"]})
+    # Send the room's recent messages before anything new arrives.
+    await send_history(ws, room)
     await send_to_room(room, {"type": "info", "room": room, "text": f"{me['name']} joined #{room}."})
     await send_user_list()
 
@@ -89,6 +108,12 @@ async def handle_message(ws, msg):
     msg_type = msg.get("type")
 
     if msg_type == "join":
+        # On the first join, the page can bring its own id, which it keeps across
+        # reloads. Without it, a reload would give us a new id, and our own saved
+        # messages would no longer look like ours.
+        wanted = clean_client_id(msg.get("client_id"))
+        if me["room"] is None and wanted and find_client(wanted) is None:
+            me["id"] = wanted
         if "name" in msg:
             me["name"] = clean_name(msg["name"])
         await join_room(ws, clean_room(msg.get("room")))
@@ -108,8 +133,15 @@ async def handle_message(ws, msg):
     elif msg_type == "chat":
         text = str(msg.get("text") or "").strip()[:MAX_TEXT]
         if text:
-            await send_to_room(me["room"], {"type": "chat", "room": me["room"],
-                                            "id": me["id"], "name": me["name"], "text": text})
+            # Save first, then send: the saved copy has an id and a timestamp.
+            saved = db.save_message(me["room"], me["id"], me["name"], text)
+            await send_to_room(me["room"], saved)
+
+    elif msg_type == "load_more":
+        # The user scrolled to the top: send the messages before the oldest one they have.
+        before = msg.get("before")
+        if isinstance(before, int) and before > 0:
+            await send_history(ws, me["room"], before)
 
     elif msg_type == "dm":
         # A private message goes to exactly two people: the recipient, and the
@@ -121,7 +153,9 @@ async def handle_message(ws, msg):
         if target is None:
             await send(ws, {"type": "error", "text": "That person is no longer online."})
             return
-        dm = {"type": "dm", "id": me["id"], "name": me["name"], "to": clients[target]["id"], "text": text}
+        # Private messages aren't saved yet: they need real accounts (Phase 4).
+        dm = {"type": "dm", "id": me["id"], "name": me["name"], "to": clients[target]["id"],
+              "text": text, "sent_at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
         await send(target, dm)
         if target is not ws:
             await send(ws, dm)
@@ -172,6 +206,7 @@ async def handler(ws):
 
 
 async def main():
+    db.init_db()
     async with websockets.serve(handler, "localhost", 8765):
         print("WebSocket server running at ws://localhost:8765")
         await asyncio.Future()  # keep running forever
