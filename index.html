@@ -77,6 +77,20 @@
       font-size: 0.7rem; font-weight: 600; flex-shrink: 0;
     }
     .empty { font-size: 0.8rem; color: #9ca3af; padding: 4px 16px; }
+    /* People list: a green dot on the avatar means online */
+    .avatar { position: relative; }
+    .avatar.offline { background: #e5e7eb; color: #6b7280; }
+    .avatar.online::after {
+      content: ""; position: absolute; right: -2px; bottom: -2px;
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #22c55e; border: 2px solid #f3f5f8;
+    }
+
+    /* Read receipts (Phase 5) */
+    .tick { margin-left: 4px; letter-spacing: -3px; color: #9ca3af; }
+    .tick.seen { color: #3b82f6; }
+    .log:not(.dm-log) .tick { display: none; }  /* rooms use "Seen by" instead */
+    .seen-by { font-size: 0.68rem; color: #9ca3af; margin: 2px 6px 0; }
     .hidden { display: none !important; }
     #manage-rooms {
       margin: 12px 16px 16px;
@@ -152,6 +166,7 @@
     .dot { width: 8px; height: 8px; border-radius: 50%; background: #d1d5db; }
     .dot.on { background: #22c55e; }
     .dot.off { background: #ef4444; }
+    .dot.wait { background: #f59e0b; }  /* reconnecting */
     .me { font-size: 0.8rem; color: #6b7280; white-space: nowrap; }
     .me b { color: #111827; }
     #logout {
@@ -320,7 +335,7 @@
       <h2>Rooms</h2>
       <ul class="list" id="rooms"></ul>
 
-      <h2>Online</h2>
+      <h2>People</h2>
       <ul class="list" id="users"></ul>
 
       <!-- Only admins see this button -->
@@ -403,6 +418,7 @@
     let myName = null;
     let currentRoom = null;   // the room the server has us in
     let users = [];           // everyone online: [{ id, name, room }]
+    let people = [];          // everyone with an account: [{ id, name }]
 
     // --- Conversations ---
     // A conversation is either a room ("room:general") or a private chat with
@@ -418,7 +434,10 @@
         log.className = "log" + (key.startsWith("dm:") ? " dm-log" : "");
         logs.appendChild(log);
         // oldestId / hasMore / loading are for "scroll up to load older messages".
-        c = { log, lastSenderId: null, unread: 0, name, oldestId: null, hasMore: false, loading: false, historyAsked: false };
+        c = { log, lastSenderId: null, unread: 0, name, oldestId: null, hasMore: false, loading: false, historyAsked: false,
+              // Read receipts: the newest message here, how far we've told the server
+              // we read, and how far the others have read.
+              newestId: 0, readSent: 0, otherRead: 0, reads: new Map() };
         conversations.set(key, c);
         log.addEventListener("scroll", () => maybeLoadOlder(key));
       }
@@ -437,6 +456,7 @@
       }
       for (const other of conversations.values()) other.log.classList.toggle("active", other === c);
       scrollToBottom(c);
+      markRead(key);
       renderTitle();
       renderSidebar();
       renderTyping();
@@ -455,11 +475,13 @@
         titleEl.appendChild(sub);
       } else {
         const id = activeKey.slice(3);
-        const user = users.find(u => u.id === id);
-        titleEl.textContent = "@" + (user ? user.name : getConversation(activeKey).name);
+        const online = users.some(u => u.id === id);
+        const person = people.find(p => p.id === id);
+        titleEl.textContent = "@" + (person ? person.name : getConversation(activeKey).name);
         const sub = document.createElement("span");
         sub.className = "sub";
-        sub.textContent = user ? "private chat" : "offline";
+        // Offline is fine now: the message waits for them.
+        sub.textContent = online ? "online" : "offline, they'll see it when they log in";
         titleEl.appendChild(sub);
       }
     }
@@ -491,6 +513,7 @@
 
       const row = document.createElement("div");
       row.className = "row " + (mine ? "mine" : "theirs") + (newSender ? " new-sender" : "");
+      if (msg.msg_id) row.dataset.msgId = msg.msg_id; // so read receipts can find it
 
       // Show the name only on others' messages, and only once per group.
       if (!mine && newSender) {
@@ -508,6 +531,14 @@
       const time = document.createElement("div");
       time.className = "time";
       time.textContent = formatTime(msg.sent_at);
+      if (mine) {
+        // One grey tick = sent (saved by the server). Turns into two blue ticks when seen.
+        const tick = document.createElement("span");
+        tick.className = "tick";
+        tick.textContent = "\u2713";
+        tick.title = "Sent";
+        time.appendChild(tick);
+      }
       row.appendChild(time);
       return row;
     }
@@ -518,9 +549,60 @@
       c.log.appendChild(buildRow(msg, c.lastSenderId));
       c.lastSenderId = msg.id;
       if (c.oldestId === null && msg.msg_id) c.oldestId = msg.msg_id;
+      c.newestId = Math.max(c.newestId, msg.msg_id || 0);
       scrollToBottom(c);
+      updateReceipts(key);
+      markRead(key);
       markUnread(key);
     }
+
+    // --- Read receipts (Phase 5) ---
+
+    // Tell the server we've read this conversation, but only if it's the one
+    // on screen AND the browser tab is visible (a hidden tab hasn't "seen" anything).
+    function markRead(key) {
+      const c = conversations.get(key);
+      if (!c || !loggedIn || key !== activeKey || document.visibilityState !== "visible") return;
+      if (c.newestId <= c.readSent) return; // nothing new since last time
+      c.readSent = c.newestId;
+      sendJSON(key.startsWith("dm:")
+        ? { type: "read", with: key.slice(3), msg_id: c.newestId }
+        : { type: "read", room: key.slice(5), msg_id: c.newestId });
+    }
+
+    // Redraw the receipts on our own messages in one conversation.
+    function updateReceipts(key) {
+      const c = conversations.get(key);
+      if (!c) return;
+      if (key.startsWith("dm:")) {
+        // Private chat: every one of our messages up to otherRead is seen.
+        for (const row of c.log.querySelectorAll(".row.mine[data-msg-id]")) {
+          const tick = row.querySelector(".tick");
+          const seen = Number(row.dataset.msgId) <= c.otherRead;
+          tick.textContent = seen ? "\u2713\u2713" : "\u2713";
+          tick.title = seen ? "Seen" : "Sent";
+          tick.classList.toggle("seen", seen);
+        }
+        return;
+      }
+      // Room: "Seen by ..." under our latest message only.
+      c.log.querySelector(".seen-by")?.remove();
+      const mineRows = c.log.querySelectorAll(".row.mine[data-msg-id]");
+      const last = mineRows[mineRows.length - 1];
+      if (!last) return;
+      const id = Number(last.dataset.msgId);
+      const names = [...c.reads.values()].filter(r => r.id !== myId && r.last >= id).map(r => r.name);
+      if (names.length === 0) return;
+      const div = document.createElement("div");
+      div.className = "seen-by";
+      div.textContent = "Seen by " + (names.length <= 3
+        ? names.join(", ")
+        : names.slice(0, 3).join(", ") + ` and ${names.length - 3} more`);
+      last.appendChild(div);
+    }
+
+    // A tab coming back into view may now "see" messages that arrived while hidden.
+    document.addEventListener("visibilitychange", () => { if (activeKey) markRead(activeKey); });
 
     // --- Message history (Phase 3) ---
 
@@ -537,9 +619,13 @@
 
     function showHistory(msg) {
       // History is either for a room or for a private chat with one person.
-      const c = getConversation(msg.dm ? "dm:" + msg.dm : "room:" + msg.room);
+      const key = msg.dm ? "dm:" + msg.dm : "room:" + msg.room;
+      const c = getConversation(key);
       c.loading = false;
       c.hasMore = msg.more;
+      // Read receipts that come with the history: how far the others have read.
+      if (msg.dm) c.otherRead = Math.max(c.otherRead, msg.other_read || 0);
+      else for (const r of msg.reads || []) c.reads.set(r.id, r);
       if (msg.messages.length) c.oldestId = msg.messages[0].msg_id;
       const { frag, lastSenderId } = buildHistory(msg.messages);
 
@@ -554,6 +640,7 @@
         c.log.textContent = "";
         c.log.appendChild(frag);
         c.lastSenderId = lastSenderId;
+        if (msg.messages.length) c.newestId = Math.max(c.newestId, msg.messages.at(-1).msg_id);
         scrollToBottom(c);
       }
       if (!c.hasMore && msg.messages.length) {
@@ -562,6 +649,8 @@
         start.textContent = msg.dm ? "This is the start of your private chat with " + c.name : "This is the start of #" + msg.room;
         c.log.prepend(start);
       }
+      updateReceipts(key);
+      markRead(key);
     }
 
     // When the user scrolls near the top of a conversation, ask for older messages.
@@ -654,37 +743,55 @@
         }));
       }
 
-      // Online users: everyone except me. Click someone to message them privately.
-      const others = users.filter(u => u.id !== myId);
+      // People: everyone with an account except me, online first. You can
+      // message someone who's offline: it waits for them (Phase 5).
+      const online = new Map(users.map(u => [u.id, u]));
+      const others = people.filter(p => p.id !== myId)
+        .sort((a, b) => (online.has(b.id) - online.has(a.id)) || a.name.localeCompare(b.name));
       usersList.textContent = "";
       if (others.length === 0) {
         const p = document.createElement("li");
         p.className = "empty";
-        p.textContent = "Nobody else is online.";
+        p.textContent = "No one else has an account yet.";
         usersList.appendChild(p);
       }
-      for (const u of others) {
-        const key = "dm:" + u.id;
-        usersList.appendChild(makeItem(u.name, {
+      for (const person of others) {
+        const key = "dm:" + person.id;
+        const here = online.get(person.id);
+        const item = makeItem(person.name, {
           active: key === activeKey,
-          avatar: u.name.charAt(0).toUpperCase(),
-          meta: u.room ? "#" + u.room : "", // hidden if it's a private room we can't enter
+          avatar: person.name.charAt(0).toUpperCase(),
+          // Their room, unless it's a private room we can't enter.
+          meta: here ? (here.room ? "#" + here.room : "online") : "offline",
           badge: conversations.get(key)?.unread || 0,
           onClick: () => {
-            getConversation(key, u.name);
+            getConversation(key, person.name);
             openConversation(key);
           },
-        }));
+        });
+        item.querySelector(".avatar").classList.add(here ? "online" : "offline");
+        usersList.appendChild(item);
       }
     }
 
     // --- Talking to the server ---
 
-    // 1. Open the connection. Note "ws://" instead of "http://".
-    const socket = new WebSocket("ws://localhost:8765");
+    // 1. The connection. Note "ws://" instead of "http://".
+    // Phase 5: if it drops, we open a new one by ourselves (see connect() below).
+    const SERVER_URL = "ws://localhost:8765";
+    const HEARTBEAT_EVERY = 25000; // ms between our pings
+    const PONG_WAIT = 10000;       // ms to wait for the pong before calling it dead
+    let socket = null;
+    let loggedIn = false;
+    let signedOutText = null;      // set when we were signed out on purpose
 
     function sendJSON(obj) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(obj));
+      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(obj));
+    }
+
+    function setStatus(text, dotClass) {
+      statusText.textContent = text;
+      dot.className = "dot " + dotClass;
     }
 
     function switchRoom(room) {
@@ -709,7 +816,7 @@
     function showLogin(error = "") {
       loginScreen.classList.remove("hidden");
       loginError.textContent = error;
-      loginSubmit.disabled = socket.readyState !== WebSocket.OPEN;
+      loginSubmit.disabled = !socket || socket.readyState !== WebSocket.OPEN;
       usernameInput.focus();
     }
 
@@ -722,25 +829,101 @@
 
     document.getElementById("logout").onclick = () => sendJSON({ type: "logout" });
 
-    // 2. Runs once, when the connection is ready: log back in, or show the login screen.
-    socket.onopen = () => {
-      statusText.textContent = "Connected";
-      dot.className = "dot on";
+    // --- Staying connected (Phase 5) ---
+    let reconnectAttempt = 0;
+    let reconnectTimer = null;
+    let countdownTimer = null;
+    let heartbeatTimer = null;
+    let pongTimer = null;
+
+    function connect() {
+      clearTimeout(reconnectTimer);
+      clearInterval(countdownTimer);
+      reconnectTimer = null;
+      setStatus("Connecting…", "wait");
+      socket = new WebSocket(SERVER_URL);
+      socket.onopen = onOpen;
+      socket.onmessage = onMessage;
+      socket.onclose = onClose;
+    }
+
+    // Wait longer after each failed try: about 1s, 2s, 4s, 8s, 16s, then 30s.
+    // The random +-20% ("jitter") stops everyone reconnecting at the same moment
+    // after a server restart.
+    function scheduleReconnect() {
+      const seconds = Math.min(30, 2 ** reconnectAttempt) * (0.8 + Math.random() * 0.4);
+      reconnectAttempt++;
+      let left = Math.ceil(seconds);
+      setStatus(`Reconnecting in ${left}s…`, "wait");
+      countdownTimer = setInterval(() => {
+        left--;
+        if (left > 0) statusText.textContent = `Reconnecting in ${left}s…`;
+      }, 1000);
+      reconnectTimer = setTimeout(connect, seconds * 1000);
+    }
+
+    // The network came back (e.g. wifi reconnected): don't wait, try now.
+    window.addEventListener("online", () => { if (reconnectTimer) connect(); });
+
+    // Our own heartbeat. A connection can die silently (laptop asleep, wifi
+    // switched) and still look open. If a ping gets no pong, it's dead.
+    function startHeartbeat() {
+      stopHeartbeat();
+      heartbeatTimer = setInterval(() => {
+        sendJSON({ type: "ping" });
+        clearTimeout(pongTimer);
+        pongTimer = setTimeout(connectionLost, PONG_WAIT);
+      }, HEARTBEAT_EVERY);
+    }
+
+    function stopHeartbeat() {
+      clearInterval(heartbeatTimer);
+      clearTimeout(pongTimer);
+    }
+
+    function connectionLost() {
+      // Give up on this socket without waiting for it to close politely.
+      const dead = socket;
+      dead.onclose = null;
+      dead.onmessage = null;
+      dead.close();
+      onClose();
+    }
+
+    // 2. Runs when a connection is ready: log back in, or show the login screen.
+    function onOpen() {
+      setStatus("Connected", "on");
+      startHeartbeat();
       const token = sessionStorage.getItem("chatToken");
       if (token) {
         sendJSON({ type: "resume", token });
       } else {
         showLogin();
       }
-    };
+    }
 
     // 3. Runs every time the server sends us something, at any moment.
-    socket.onmessage = (event) => {
+    function onMessage(event) {
       const msg = JSON.parse(event.data);
 
-      if (msg.type === "auth_ok") {
+      if (msg.type === "pong") {
+        clearTimeout(pongTimer); // still alive
+
+      } else if (msg.type === "auth_ok") {
         // Logged in. Keep the token (only sent on a fresh login) and join a room.
         if (msg.token) sessionStorage.setItem("chatToken", msg.token);
+        const reconnected = myId !== null; // we were logged in before the drop
+        loggedIn = true;
+        reconnectAttempt = 0;
+        if (reconnected) {
+          // We may have missed private messages while away: fetch history again
+          // when each private chat is next opened (the open one right now).
+          for (const [key, c] of conversations) if (key.startsWith("dm:")) c.historyAsked = false;
+          if (activeKey && activeKey.startsWith("dm:")) {
+            conversations.get(activeKey).historyAsked = true;
+            sendJSON({ type: "dm_history", with: activeKey.slice(3) });
+          }
+        }
         myId = msg.user.id;
         myName = msg.user.name;
         document.getElementById("me-name").textContent = myName;
@@ -766,7 +949,9 @@
         // The server moved us into a room (it may have cleaned up the name).
         currentRoom = msg.room;
         sessionStorage.setItem("chatRoom", msg.room); // remembered across reloads
-        openConversation("room:" + msg.room);
+        // After a reconnect, stay in the private chat we were reading.
+        if (activeKey && activeKey.startsWith("dm:")) renderSidebar();
+        else openConversation("room:" + msg.room);
 
       } else if (msg.type === "history") {
         showHistory(msg);
@@ -778,7 +963,7 @@
       } else if (msg.type === "dm") {
         // If I sent it, the conversation is with the recipient; otherwise with the sender.
         const otherId = msg.id === myId ? msg.to : msg.id;
-        const other = users.find(u => u.id === otherId);
+        const other = people.find(p => p.id === otherId);
         getConversation("dm:" + otherId, other ? other.name : msg.name);
         addMessage("dm:" + otherId, msg);
         clearTyping(msg.id);
@@ -793,6 +978,32 @@
         users = msg.users;
         renderSidebar();
         renderTitle();
+
+      } else if (msg.type === "people") {
+        people = msg.people;
+        renderSidebar();
+        renderTitle();
+
+      } else if (msg.type === "unread") {
+        // After logging in: messages that arrived while we were away.
+        for (const [key, n] of Object.entries(msg.counts)) {
+          const person = people.find(p => "dm:" + p.id === key);
+          const c = getConversation(key, person ? person.name : undefined);
+          if (key !== activeKey) c.unread = n;
+        }
+        renderSidebar();
+
+      } else if (msg.type === "seen") {
+        // Read receipts: someone read up to msg_id.
+        if (msg.with) {
+          const c = getConversation("dm:" + msg.with);
+          c.otherRead = Math.max(c.otherRead, msg.msg_id);
+          updateReceipts("dm:" + msg.with);
+        } else {
+          const c = getConversation("room:" + msg.room);
+          c.reads.set(msg.id, { id: msg.id, name: msg.name, last: msg.msg_id });
+          updateReceipts("room:" + msg.room);
+        }
 
       } else if (msg.type === "rooms") {
         // The rooms we may enter. Sent after logging in and whenever an admin changes them.
@@ -812,7 +1023,7 @@
         if (!adminPanel.classList.contains("hidden")) adminError(msg.text);
         else if (activeKey) addInfo(activeKey, msg.text, true);
       }
-    };
+    }
 
     // --- Admin panel ---
     // The page only shows the panel to admins, but that's just convenience:
@@ -926,16 +1137,18 @@
     }
 
     // 4. Runs if the connection closes (for example, the server stopped).
-    let signedOutText = null;
-    socket.onclose = () => {
-      statusText.textContent = "Disconnected";
-      dot.className = "dot off";
-      sendBtn.disabled = true;
+    function onClose() {
+      stopHeartbeat();
+      loggedIn = false;
+      sendBtn.disabled = true; // nothing can be sent until we're back
       if (signedOutText) {
-        // We were signed out on purpose: say so on the login screen.
+        // We were signed out on purpose: don't reconnect, say so on the login screen.
+        setStatus("Disconnected", "off");
         showLogin(signedOutText + " Reload the page to log in again.");
+        return;
       }
-    };
+      scheduleReconnect();
+    }
 
     // --- Typing indicator (receiving side) ---
     // id -> { name, key, timer }. Each person's "typing" disappears 2s after their
@@ -978,7 +1191,7 @@
     // 5. Send a message to whatever conversation is open.
     function send() {
       const text = textInput.value.trim();
-      if (!text || !activeKey || socket.readyState !== WebSocket.OPEN) return;
+      if (!text || !activeKey || !loggedIn) return;
       if (activeKey.startsWith("dm:")) {
         sendJSON({ type: "dm", to: activeKey.slice(3), text });
       } else if (activeKey === "room:" + currentRoom) {
@@ -1004,6 +1217,8 @@
         ? { type: "typing", to: activeKey.slice(3) }
         : { type: "typing" });
     };
+
+    connect(); // start!
   </script>
 </body>
 </html>
