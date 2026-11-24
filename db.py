@@ -5,7 +5,7 @@ SQLite keeps the whole database in a single file (chat.db) and comes built into
 Python, so there is nothing extra to install or run.
 """
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # The database file lives next to this script.
@@ -34,12 +34,197 @@ def init_db(path=DB_PATH):
     # An index makes "the latest messages in this room" fast, even with
     # thousands of messages, because SQLite doesn't have to scan the whole table.
     _conn.execute("CREATE INDEX IF NOT EXISTS idx_room_id ON messages (room, id)")
+
+    # Phase 4: accounts. COLLATE NOCASE means "Alice" and "alice" count as the
+    # same username, so nobody can register a look-alike.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            created_at    TEXT NOT NULL
+        )
+    """)
+    # One row per login. We store a hash of the token, never the token itself.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            token_hash TEXT PRIMARY KEY,
+            user_id    INTEGER NOT NULL REFERENCES users (id),
+            expires_at TEXT NOT NULL
+        )
+    """)
+
+    # Admins can create rooms and decide who may enter them. Older databases
+    # don't have this column yet, so add it if it's missing (a "migration").
+    columns = [row["name"] for row in _conn.execute("PRAGMA table_info(users)")]
+    if "is_admin" not in columns:
+        _conn.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+
+    # Rooms: public rooms are open to everyone; private ones only to members.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS rooms (
+            name       TEXT PRIMARY KEY,
+            is_public  INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+    # Who may enter which private room: one row per (room, user) pair.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS room_members (
+            room    TEXT NOT NULL REFERENCES rooms (name),
+            user_id INTEGER NOT NULL REFERENCES users (id),
+            PRIMARY KEY (room, user_id)
+        )
+    """)
+    # Everyone shares #general.
+    _conn.execute("INSERT OR IGNORE INTO rooms (name, is_public, created_at) VALUES ('general', 1, ?)",
+                  (_now().isoformat(timespec="seconds"),))
     _conn.commit()
+
+
+def _now():
+    return datetime.now(timezone.utc)
+
+
+# --- Users and sessions ---
+
+def create_user(username, password_hash):
+    """Add a user and return their id, or None if the username is taken."""
+    try:
+        cur = _conn.execute(
+            "INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, ?)",
+            (username, password_hash, _now().isoformat(timespec="seconds")),
+        )
+    except sqlite3.IntegrityError:  # the UNIQUE rule refused a duplicate
+        return None
+    _conn.commit()
+    return cur.lastrowid
+
+
+def get_user_by_name(username):
+    return _conn.execute("SELECT * FROM users WHERE username = ?", (username,)).fetchone()
+
+
+def create_session(token_hash, user_id, days):
+    expires = (_now() + timedelta(days=days)).isoformat(timespec="seconds")
+    _conn.execute("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)",
+                  (token_hash, user_id, expires))
+    _conn.commit()
+
+
+def get_session_user(token_hash):
+    """The user a token belongs to, or None if it's unknown or has expired."""
+    return _conn.execute(
+        "SELECT users.* FROM sessions JOIN users ON users.id = sessions.user_id "
+        "WHERE sessions.token_hash = ? AND sessions.expires_at > ?",
+        (token_hash, _now().isoformat(timespec="seconds")),
+    ).fetchone()
+
+
+def delete_session(token_hash):
+    _conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+    _conn.commit()
+
+
+def set_admin(username, is_admin=True):
+    """Make someone an admin (or not). Returns False if there's no such user."""
+    cur = _conn.execute("UPDATE users SET is_admin = ? WHERE username = ?", (int(is_admin), username))
+    _conn.commit()
+    return cur.rowcount == 1
+
+
+def set_password(username, password_hash):
+    """Replace a user's password and log them out everywhere. False if no such user."""
+    user = get_user_by_name(username)
+    if user is None:
+        return False
+    _conn.execute("UPDATE users SET password_hash = ? WHERE id = ?", (password_hash, user["id"]))
+    _conn.execute("DELETE FROM sessions WHERE user_id = ?", (user["id"],))
+    _conn.commit()
+    return True
+
+
+def is_admin(user_id):
+    row = _conn.execute("SELECT is_admin FROM users WHERE id = ?", (int(user_id),)).fetchone()
+    return bool(row and row["is_admin"])
+
+
+def list_users():
+    return _conn.execute("SELECT id, username, is_admin, created_at FROM users ORDER BY id").fetchall()
+
+
+# --- Rooms and who may enter them ---
+
+def create_room(name, is_public=False):
+    """Create a room. Returns False if it already exists."""
+    try:
+        _conn.execute("INSERT INTO rooms (name, is_public, created_at) VALUES (?, ?, ?)",
+                      (name, int(is_public), _now().isoformat(timespec="seconds")))
+    except sqlite3.IntegrityError:
+        return False
+    _conn.commit()
+    return True
+
+
+def get_room(name):
+    return _conn.execute("SELECT * FROM rooms WHERE name = ?", (name,)).fetchone()
+
+
+def add_member(room, user_id):
+    _conn.execute("INSERT OR IGNORE INTO room_members (room, user_id) VALUES (?, ?)", (room, int(user_id)))
+    _conn.commit()
+
+
+def remove_member(room, user_id):
+    _conn.execute("DELETE FROM room_members WHERE room = ? AND user_id = ?", (room, int(user_id)))
+    _conn.commit()
+
+
+def rooms_for(user_id):
+    """
+    The rooms a user may enter: every public room, the private rooms they're a
+    member of, and every room if they're an admin. This one query is the whole
+    access rule, so the server can't apply it differently in different places.
+    """
+    return _conn.execute("""
+        SELECT name, is_public FROM rooms
+        WHERE is_public = 1
+           OR EXISTS (SELECT 1 FROM room_members m WHERE m.room = rooms.name AND m.user_id = ?)
+           OR EXISTS (SELECT 1 FROM users u WHERE u.id = ? AND u.is_admin = 1)
+        ORDER BY is_public DESC, name
+    """, (int(user_id), int(user_id))).fetchall()
+
+
+def can_access(user_id, room):
+    return any(r["name"] == room for r in rooms_for(user_id))
+
+
+def all_rooms_with_members():
+    """For the admin panel: every room and the usernames of its members."""
+    rooms = []
+    for r in _conn.execute("SELECT name, is_public FROM rooms ORDER BY is_public DESC, name"):
+        members = [m["username"] for m in _conn.execute(
+            "SELECT u.username FROM room_members m JOIN users u ON u.id = m.user_id "
+            "WHERE m.room = ? ORDER BY u.username", (r["name"],))]
+        rooms.append({"name": r["name"], "public": bool(r["is_public"]), "members": members})
+    return rooms
+
+
+# --- Messages ---
+
+def dm_key(user_a, user_b):
+    """
+    Private messages are stored like a room whose name is made from the two
+    user ids, smallest first, so both people get the same key. Room names can't
+    contain ":" (server.py cleans them), so a real room can never clash with it.
+    """
+    a, b = sorted([int(user_a), int(user_b)])
+    return f"dm:{a}:{b}"
 
 
 def save_message(room, sender_id, sender_name, text):
     """Store one chat message and return it as the server will send it."""
-    sent_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    sent_at = _now().isoformat(timespec="seconds")
     # The ? placeholders let SQLite insert the values safely. Building the SQL
     # with f-strings would let a message like  '); DROP TABLE messages; --
     # run as SQL (an "SQL injection" attack).
