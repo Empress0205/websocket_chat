@@ -582,11 +582,20 @@ async def handle_board(ws, msg):
         points = board.clean_points(msg.get("points"))
         if points is None:
             return
-        if len(stroke["points"]) + len(points) > board.MAX_POINTS:
-            points = []  # long enough: ignore the rest of this line
-        stroke["points"] += points
+        replace = stroke["tool"] in board.SHAPES
+        if replace:
+            # A shape is always its two points: each batch is the whole shape
+            # as it is now, so others see it stretch while it's dragged.
+            if len(points) == 4:
+                stroke["points"] = points
+            else:
+                points = []  # not two points: ignore them (a "done" still finishes it)
+        else:
+            if len(stroke["points"]) + len(points) > board.MAX_POINTS:
+                points = []  # long enough: ignore the rest of this line
+            stroke["points"] += points
         live = {"type": "board_draw", "id": me["id"], "sid": sid, "tool": stroke["tool"],
-                "color": stroke["color"], "text": stroke["text"], "points": points}
+                "color": stroke["color"], "text": stroke["text"], "points": points, "replace": replace}
         await send_to_board(conv, live, exclude=ws)
 
         if msg.get("done"):
