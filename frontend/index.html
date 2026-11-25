@@ -8,7 +8,15 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
+      <!-- Fold the sidebar into a thin strip, or open it again (remembered in this browser) -->
+      <div class="sidebar-top">
+        <button id="sidebar-toggle" class="sidebar-toggle" aria-controls="sidebar" aria-expanded="true" title="Hide rooms and people">
+          <svg class="icon-fold" viewBox="0 0 16 16" aria-hidden="true"><path d="M8.5 4L4.5 8l4 4M12.5 4l-4 4 4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <svg class="icon-unfold" viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 4l4 4-4 4M7.5 4l4 4-4 4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <span id="sidebar-unread" class="toggle-badge hidden"></span>
+        </button>
+      </div>
       <h2>Rooms</h2>
       <ul class="list" id="rooms"></ul>
 
