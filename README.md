@@ -157,10 +157,11 @@ What I learned: the **server is the vote counter**. The page only says "I vote f
 ### Extra: shared drawing board
 
 - **Click Board** next to the message box. The board opens in a panel beside the chat, so you can keep talking while you sketch. Each room and private chat has its own board, and only people who can see that conversation can see its board.
-- **Draw together, live.** Everyone with the board open sees each line as it's drawn, plus everyone's pointer with their name.
+- **Draw together, live.** Everyone with the board open sees each line as it's drawn, plus everyone's pointer with their name. If your board is closed when someone starts drawing, a banner says *"admin is drawing on the board"* with an **Open the board** button.
 - **Tools:** pen, text labels, an eraser (it rubs out a whole line or shape) and a **Shapes** menu, in black, blue, red or green. *Undo* removes your own last line; *Clear* wipes the board for everyone.
 - **Shapes:** line, arrow, rectangle, ellipse, diamond, triangle, cloud and cylinder, enough for a quick network sketch or flowchart (a cloud for the internet, a cylinder for a database or server). Drag to draw; hold **Shift** for a perfect square or circle, or a line at 45°. Others watch the shape stretch as you drag it.
 - **Saved with the conversation.** Close the board or reload the page, and the drawing is still there.
+- **Make it bigger:** drag the panel's left edge to make it wider (the width is remembered; double-click the edge to reset), or click **Expand** to give the board the main space with the chat docked on the right. Everyone still sees the same drawing, just drawn larger or smaller.
 - **Post snapshot to chat** puts a picture of the board into the conversation, frozen as it was, so the chat keeps a record (handy after sketching a network problem).
 
 What I learned:
@@ -348,6 +349,7 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Server → board | `board_removed` / `board_cleared` | Lines gone (`"ids"`), or the board wiped (`"by"` who) |
 | Client ↔ server | `board_cursor` | Where someone's pointer is, about 12 times a second: `{ "x", "y" }`, passed on with their `id` and `name` |
 | Server → board | `board_viewers` | Who has the board open: `[{ "id", "name" }]` |
+| Server → client | `board_activity` | Someone started drawing on the board of a conversation you're in, and yours is closed: `{ "key", "id", "name" }`. At most once every 20 seconds per person drawing |
 | Client → server | `board_snapshot` | Post a picture of the board to the conversation. It arrives as a `chat` / `dm` message with a `board` field holding the frozen strokes |
 | Server → client | `error` | Something went wrong, e.g. a private message to someone who just left, or sending too fast |
 
