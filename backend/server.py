@@ -13,6 +13,7 @@ import websockets
 
 import auth  # our own file: passwords and login tokens (auth.py)
 import db  # our own file: saves and loads data (db.py)
+import polls  # our own file: the rules for polls (polls.py)
 from ratelimit import RateLimiter, RateLimiterGroup  # our own file (ratelimit.py)
 
 DEFAULT_ROOM = "general"
@@ -72,6 +73,17 @@ async def send_to_room(room, message: dict, exclude=None):
     for ws, info in list(clients.items()):
         if info["room"] == room and ws is not exclude:
             await send(ws, message)
+
+
+async def send_to_conv(conv, message: dict):
+    """Send to everyone in a conversation: a room, or both people in a private chat."""
+    if conv.startswith("dm:"):
+        for user_id in polls.people_in(conv):
+            target = find_client(user_id)
+            if target is not None:
+                await send(target, message)
+    else:
+        await send_to_room(conv, message)
 
 
 def find_client(user_id):
@@ -343,8 +355,11 @@ async def handle_message(ws, msg):
         # Everything below needs the client to have joined a room first.
         print("Ignored message before join:", for_log(msg))
 
-    elif msg_type in ("chat", "dm") and not me["message_limit"].allow():
+    elif msg_type in ("chat", "dm", "poll_create", "poll_vote") and not me["message_limit"].allow():
         await send(ws, {"type": "error", "text": "You're sending messages too fast. Wait a moment."})
+
+    elif msg_type.startswith("poll_"):
+        await handle_poll(ws, msg)
 
     elif msg_type == "chat":
         text = str(msg.get("text") or "").strip()[:MAX_TEXT]
@@ -419,6 +434,62 @@ async def handle_message(ws, msg):
 
     else:
         print("Ignored unknown message:", for_log(msg))
+
+
+async def handle_poll(ws, msg):
+    """Create a poll, vote in one, or close one. The server counts every vote."""
+    me = clients[ws]
+    kind = msg.get("type")
+
+    if kind == "poll_create":
+        question, options, error = polls.clean_poll(msg.get("question"), msg.get("options"))
+        if error:
+            await send(ws, {"type": "error", "text": error})
+            return
+        if msg.get("to"):
+            # A poll in a private chat, like a private message.
+            to = valid_user_id(msg.get("to"))
+            if not to or to == me["id"] or db.get_user(to) is None:
+                await send(ws, {"type": "error", "text": "There's no such person."})
+                return
+            saved = db.create_poll(db.dm_key(me["id"], to), me["id"], me["name"], question, options)
+            dm = {**saved, "type": "dm", "to": to}
+            target = find_client(to)
+            if target is not None:
+                await send(target, dm)
+            await send(ws, dm)
+        else:
+            saved = db.create_poll(me["room"], me["id"], me["name"], question, options)
+            await send_to_room(me["room"], saved)
+        return
+
+    # Voting and closing: find the poll, and check this person may use it.
+    poll_id = msg.get("poll_id")
+    poll = db.get_poll(poll_id) if isinstance(poll_id, int) else None
+    if poll is None or not polls.can_use(me["id"], poll["conv"]):
+        await send(ws, {"type": "error", "text": "There's no such poll."})
+        return
+    if poll["closed"]:
+        await send(ws, {"type": "error", "text": "This poll is closed."})
+        return
+
+    if kind == "poll_vote":
+        option = msg.get("option")
+        if not isinstance(option, int) or not 0 <= option < len(poll["options"]):
+            return
+        db.toggle_vote(poll["id"], me["id"], option)
+    elif kind == "poll_close":
+        # Only the person who made it, or an admin, may close a poll.
+        if poll["creator_id"] != me["id"] and not db.is_admin(me["id"]):
+            await send(ws, {"type": "error", "text": "Only the person who made the poll can close it."})
+            return
+        db.close_poll(poll["id"])
+    else:
+        print("Ignored unknown message:", for_log(msg))
+        return
+
+    # Everyone in the conversation sees the new totals straight away.
+    await send_to_conv(poll["conv"], {"type": "poll_update", "poll": db.get_poll(poll["id"])})
 
 
 async def handler(ws):
