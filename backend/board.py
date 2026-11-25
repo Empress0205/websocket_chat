@@ -2,11 +2,12 @@
 Drawing board: the rules for what may be drawn.
 
 Every screen draws the board at a different size, so points are sent in
-"board units" on a fixed 1000 x 1250 board, and each page scales them to fit.
+"board units" on a fixed 2000 x 1250 board, and each page scales them to fit.
+(It was 1000 wide at first. Drawings from then sit in the left half.)
 The server checks every point, colour and tool, so nobody can send a million
 points or draw off the board by sending messages by hand.
 """
-WIDTH = 1000
+WIDTH = 2000
 HEIGHT = 1250
 
 COLORS = ("black", "blue", "red", "green")
