@@ -9,6 +9,7 @@
 //   admin.js          the Admin panel
 //   typing.js         "... is typing"
 //   composer.js       the message box and Send button
+//   polls.js          poll cards, voting and the /poll command
 
 import { connect } from "./connection.js";
 
