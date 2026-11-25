@@ -144,6 +144,16 @@ Before a real launch, I reviewed the code for what would have to change. This is
 
 ## Features
 
+### Extra: live polls
+
+- **Make a poll** in any room or private chat: click **Poll** next to the message box, write the question and the options, and click *Create poll*. A poll has 2 to 10 options. Shortcut: type `/poll Where should we have lunch? | Pizza | Pilau | Chips mayai`.
+- **Vote with one click.** Everyone sees the bars and counts move straight away, with the names of who voted for what.
+- **One vote each.** Click another option to change your vote, or the same one again to take it back.
+- **Close a poll** when you're done. Only the person who made it, or an admin, can. The winner is highlighted and voting stops.
+- **Saved with the conversation.** Polls and their votes are in the history, so people who arrive later see the results.
+
+What I learned: the **server is the vote counter**. The page only says "I vote for option 2", and the server checks the poll exists, is still open, and that you may see it. A database rule (one row per person per poll) makes voting twice impossible, even by sending messages by hand. Storing each poll as a message that points to a `polls` table meant history, private chats and unread badges worked for polls without any extra code.
+
 ### Added in Phase 5
 
 - **Automatic reconnecting.** If the connection drops, the header shows "Reconnecting in 4s…" with a yellow dot, and the page reconnects by itself, back in the same room and conversation.
@@ -197,6 +207,7 @@ The project is split into a **backend** (the Python server) and a **frontend** (
 │   ├── db.py              # Saving and loading users, logins, rooms and messages (SQLite)
 │   ├── auth.py            # Password hashing, login tokens, username and password rules
 │   ├── ratelimit.py       # Stops anyone sending too much, too fast
+│   ├── polls.py           # The rules for polls: what a poll may contain, who may vote
 │   ├── manage.py          # Admin tasks from the command line
 │   ├── requirements.txt   # Python dependencies
 │   └── chat.db            # The database (created on first run, never committed)
@@ -215,7 +226,8 @@ The project is split into a **backend** (the Python server) and a **frontend** (
         ├── login.js           # The log-in screen
         ├── admin.js           # The Admin panel
         ├── typing.js          # "... is typing"
-        └── composer.js        # The message box and Send button
+        ├── composer.js        # The message box, Send button and /poll command
+        └── polls.js           # Poll cards and voting
 ```
 
 The JavaScript files are **ES modules**: each one says what it `export`s, and what it `import`s from the others, so it's clear how they depend on each other.
@@ -304,6 +316,11 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Client → server | `admin_list` / `admin_create_user` / `admin_create_room` / `admin_add_member` / `admin_remove_member` | Admin only: list rooms, create an account (`username`, `password`), create a private room (`name`), or add or remove a member (`room`, `username`) |
 | Server → admin | `admin_rooms` | Every room with its members, and every username, for the *Admin* panel |
 | Server → client | `notice` | A plain notice, e.g. "You were given access to #bank-x." |
+| Client → server | `poll_create` | Make a poll: `{ "type": "poll_create", "question": "...", "options": ["...", "..."] }`. Add `"to": "<user id>"` for a private chat |
+| Server → room / 2 people | `chat` / `dm` with `poll` | The new poll, sent like a message. Its `poll` field holds `{ id, question, closed, creator_id, options: [{ text, voters: [{ id, name }] }] }` |
+| Client → server | `poll_vote` | `{ "type": "poll_vote", "poll_id": 7, "option": 1 }`. Voting for your current choice again takes the vote back |
+| Client → server | `poll_close` | `{ "type": "poll_close", "poll_id": 7 }`. Only the poll's creator or an admin |
+| Server → room / 2 people | `poll_update` | New totals after a vote or a close: `{ "poll": { ... } }` |
 | Server → client | `error` | Something went wrong, e.g. a private message to someone who just left, or sending too fast |
 
 ## Configuration
