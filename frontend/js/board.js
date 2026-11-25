@@ -68,6 +68,7 @@ export function toggleBoard() {
 
 export function openBoard() {
   if (!state.activeKey || !state.loggedIn) return;
+  hideBanner();
   board.open = true;
   panel.classList.remove("hidden");
   app.classList.add("with-panel");
@@ -80,6 +81,7 @@ export function openBoard() {
 export function closeBoard() {
   if (!board.open) return;
   commitText(); // a label still being typed is saved before the board closes
+  setExpanded(false);
   board.open = false;
   board.key = null;
   cancelMyStroke();
@@ -121,8 +123,40 @@ function requestBoard(key) {
 
 // Another conversation was opened: the board follows it.
 export function boardFollow(key) {
+  hideBanner(); // the banner was about the conversation we just left
   if (board.open && key !== board.key) requestBoard(key);
 }
+
+// --- "<name> is drawing on the board" ---
+// Live drawing only reaches people with the board open. When someone starts
+// drawing and ours is closed, the server tells us, and a banner offers to open it.
+
+const banner = document.getElementById("board-banner");
+const bannerText = document.getElementById("board-banner-text");
+const drawers = new Map(); // name -> when we last heard they were drawing
+let bannerTimer = null;
+
+export function showBoardActivity(msg) {
+  if (board.open || msg.key !== state.activeKey) return; // already watching, or not on screen
+  drawers.set(msg.name, Date.now());
+  for (const [name, at] of drawers) if (Date.now() - at > 30000) drawers.delete(name);
+  const names = [...drawers.keys()];
+  bannerText.textContent = names.length === 1
+    ? `${names[0]} is drawing on the board`
+    : `${names.slice(0, -1).join(", ")} and ${names.at(-1)} are drawing on the board`;
+  banner.classList.remove("hidden");
+  clearTimeout(bannerTimer);
+  bannerTimer = setTimeout(hideBanner, 30000); // gone quiet: tidy it away
+}
+
+function hideBanner() {
+  banner.classList.add("hidden");
+  drawers.clear();
+  clearTimeout(bannerTimer);
+}
+
+document.getElementById("board-banner-open").onclick = openBoard;
+document.getElementById("board-banner-close").onclick = hideBanner;
 
 // We logged back in after the connection dropped: open the board again.
 export function boardReconnected() {
@@ -134,11 +168,20 @@ export function boardReconnected() {
 export function handleBoardMessage(msg) {
   if (!board.open || msg.key !== board.key) return; // for a board we've left
   switch (msg.type) {
-    case "board_state":
+    case "board_state": {
       clearTimeout(answerTimer); // the server answered
-      setNote(NOTE);
       board.strokes = new Map(msg.strokes.map(s => [s.id, s]));
+      // A server started before the newest board features doesn't list them
+      // (or sends no list at all): say so, instead of drawing alone silently.
+      const known = new Set(msg.tools || []);
+      const missing = ["pen", "text", ...SHAPES].filter(t => !known.has(t));
+      if (missing.length) {
+        setNote("The server is older than this page, so some tools won't be shared. Restart the server.", true);
+      } else {
+        setNote(NOTE);
+      }
       break;
+    }
 
     case "board_viewers": {
       board.viewers = msg.viewers;
@@ -703,6 +746,73 @@ document.getElementById("board-snapshot").onclick = () => {
   setNote("Snapshot posted to the chat.");
 };
 document.getElementById("board-close").onclick = closeBoard;
+
+// --- Making the board bigger ---
+
+// Expand: the board takes the main space and the chat docks to the side
+// (Option B in the layout design). The drawing itself doesn't change: it's
+// the same board, just drawn larger, so everyone still sees the same thing.
+const expandBtn = document.getElementById("board-expand");
+
+function setExpanded(on) {
+  app.classList.toggle("board-expanded", on);
+  expandBtn.setAttribute("aria-pressed", String(on));
+  const label = on ? "Back to the side panel" : "Expand the board";
+  expandBtn.setAttribute("aria-label", label);
+  expandBtn.title = label;
+}
+expandBtn.onclick = () => setExpanded(!app.classList.contains("board-expanded"));
+
+// Resize: drag the panel's left edge. The width is remembered in this browser.
+const MIN_WIDTH = 340;
+const DEFAULT_WIDTH = 460;
+const resizer = document.getElementById("panel-resize");
+
+function maxWidth() {
+  return Math.max(MIN_WIDTH, Math.min(1000, window.innerWidth - 560)); // leave room for the chat
+}
+
+function setPanelWidth(width, save = true) {
+  const w = Math.round(Math.min(Math.max(width, MIN_WIDTH), maxWidth()));
+  app.style.setProperty("--panel-w", w + "px");
+  resizer.setAttribute("aria-valuenow", String(w));
+  resizer.setAttribute("aria-valuemin", String(MIN_WIDTH));
+  resizer.setAttribute("aria-valuemax", String(maxWidth()));
+  if (save) localStorage.setItem("boardWidth", String(w));
+}
+setPanelWidth(Number(localStorage.getItem("boardWidth")) || DEFAULT_WIDTH, false);
+
+resizer.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  resizer.setPointerCapture(e.pointerId);
+  const startX = e.clientX;
+  const startWidth = panel.getBoundingClientRect().width;
+  app.classList.add("resizing");
+  const move = (ev) => setPanelWidth(startWidth + (startX - ev.clientX)); // dragging left makes it wider
+  const stop = () => {
+    app.classList.remove("resizing");
+    resizer.removeEventListener("pointermove", move);
+    resizer.removeEventListener("pointerup", stop);
+    resizer.removeEventListener("pointercancel", stop);
+  };
+  resizer.addEventListener("pointermove", move);
+  resizer.addEventListener("pointerup", stop);
+  resizer.addEventListener("pointercancel", stop);
+});
+// Arrow keys resize too; double-click goes back to the normal width.
+resizer.addEventListener("keydown", (e) => {
+  const step = e.shiftKey ? 80 : 20;
+  const now = panel.getBoundingClientRect().width;
+  if (e.key === "ArrowLeft") setPanelWidth(now + step);
+  else if (e.key === "ArrowRight") setPanelWidth(now - step);
+  else return;
+  e.preventDefault();
+});
+resizer.addEventListener("dblclick", () => setPanelWidth(DEFAULT_WIDTH));
+window.addEventListener("resize", () => {
+  const now = Number(localStorage.getItem("boardWidth")) || DEFAULT_WIDTH;
+  setPanelWidth(now, false); // keep it within the window as it changes size
+});
 
 // --- Snapshots in the chat ---
 
