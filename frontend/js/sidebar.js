@@ -6,6 +6,36 @@ import { getConversation, openConversation } from "./conversations.js";
 
 const roomsList = document.getElementById("rooms");
 const usersList = document.getElementById("users");
+const app = document.querySelector(".app");
+const toggleBtn = document.getElementById("sidebar-toggle");
+const toggleBadge = document.getElementById("sidebar-unread");
+
+// --- Hiding the sidebar ---
+// The button in the chat header hides or shows Rooms and People. The choice
+// is remembered in this browser. While it's hidden, the button shows how many
+// unread messages are waiting, so nothing is missed.
+
+function setSidebarHidden(hidden) {
+  app.classList.toggle("sidebar-hidden", hidden);
+  toggleBtn.setAttribute("aria-expanded", String(!hidden));
+  const label = hidden ? "Show rooms and people" : "Hide rooms and people";
+  toggleBtn.title = label;
+  toggleBtn.setAttribute("aria-label", label);
+  localStorage.setItem("sidebarHidden", hidden ? "1" : "");
+  updateToggleBadge();
+}
+
+toggleBtn.onclick = () => setSidebarHidden(!app.classList.contains("sidebar-hidden"));
+setSidebarHidden(localStorage.getItem("sidebarHidden") === "1");
+
+function updateToggleBadge() {
+  let unread = 0;
+  for (const c of conversations.values()) unread += c.unread;
+  const show = app.classList.contains("sidebar-hidden") && unread > 0;
+  toggleBadge.classList.toggle("hidden", !show);
+  toggleBadge.textContent = unread > 99 ? "99+" : String(unread);
+  toggleBtn.setAttribute("aria-label", toggleBtn.title + (show ? ` (${unread} unread)` : ""));
+}
 
 // A small outline padlock, drawn with SVG so it matches the text colour.
 function lockIcon() {
@@ -105,6 +135,7 @@ export function renderSidebar() {
     item.querySelector(".avatar").classList.add(here ? "online" : "offline");
     usersList.appendChild(item);
   }
+  updateToggleBadge(); // unread counts may have changed
 }
 
 function switchRoom(room) {
