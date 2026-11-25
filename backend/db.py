@@ -4,6 +4,7 @@ Message storage for the chat server, using SQLite.
 SQLite keeps the whole database in a single file (chat.db) and comes built into
 Python, so there is nothing extra to install or run.
 """
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -87,6 +88,32 @@ def init_db(path=DB_PATH):
             PRIMARY KEY (user_id, conv)
         )
     """)
+    # Polls. A poll appears in a conversation as a message whose poll_id points
+    # here, so history, private chats and unread counts work for polls too.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS polls (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            conv       TEXT NOT NULL,
+            creator_id INTEGER NOT NULL REFERENCES users (id),
+            question   TEXT NOT NULL,
+            options    TEXT NOT NULL,
+            closed     INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        )
+    """)
+    # One row per person per poll: the PRIMARY KEY makes voting twice impossible.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS poll_votes (
+            poll_id INTEGER NOT NULL REFERENCES polls (id),
+            user_id INTEGER NOT NULL REFERENCES users (id),
+            option  INTEGER NOT NULL,
+            PRIMARY KEY (poll_id, user_id)
+        )
+    """)
+    columns = [row["name"] for row in _conn.execute("PRAGMA table_info(messages)")]
+    if "poll_id" not in columns:
+        _conn.execute("ALTER TABLE messages ADD COLUMN poll_id INTEGER REFERENCES polls (id)")
+
     # Everyone shares #general.
     _conn.execute("INSERT OR IGNORE INTO rooms (name, is_public, created_at) VALUES ('general', 1, ?)",
                   (_now().isoformat(timespec="seconds"),))
@@ -293,18 +320,18 @@ def unread_counts(user_id, rooms):
     return counts
 
 
-def save_message(room, sender_id, sender_name, text):
+def save_message(room, sender_id, sender_name, text, poll_id=None):
     """Store one chat message and return it as the server will send it."""
     sent_at = _now().isoformat(timespec="seconds")
     # The ? placeholders let SQLite insert the values safely. Building the SQL
     # with f-strings would let a message like  '); DROP TABLE messages; --
     # run as SQL (an "SQL injection" attack).
     cur = _conn.execute(
-        "INSERT INTO messages (room, sender_id, sender_name, text, sent_at) VALUES (?, ?, ?, ?, ?)",
-        (room, sender_id, sender_name, text, sent_at),
+        "INSERT INTO messages (room, sender_id, sender_name, text, sent_at, poll_id) VALUES (?, ?, ?, ?, ?, ?)",
+        (room, sender_id, sender_name, text, sent_at, poll_id),
     )
     _conn.commit()
-    return _to_message(cur.lastrowid, room, sender_id, sender_name, text, sent_at)
+    return _to_message(cur.lastrowid, room, sender_id, sender_name, text, sent_at, poll_id)
 
 
 def get_history(room, before_id=None, limit=HISTORY_LIMIT):
@@ -324,13 +351,69 @@ def get_history(room, before_id=None, limit=HISTORY_LIMIT):
     rows = rows[:limit]
     rows.reverse()  # we fetched newest first; the page wants oldest first
     messages = [
-        _to_message(r["id"], r["room"], r["sender_id"], r["sender_name"], r["text"], r["sent_at"])
+        _to_message(r["id"], r["room"], r["sender_id"], r["sender_name"], r["text"], r["sent_at"], r["poll_id"])
         for r in rows
     ]
     return messages, more
 
 
-def _to_message(msg_id, room, sender_id, sender_name, text, sent_at):
+def _to_message(msg_id, room, sender_id, sender_name, text, sent_at, poll_id=None):
     """The same shape as a live "chat" message, so the page treats both alike."""
-    return {"type": "chat", "msg_id": msg_id, "room": room, "id": sender_id,
-            "name": sender_name, "text": text, "sent_at": sent_at}
+    msg = {"type": "chat", "msg_id": msg_id, "room": room, "id": sender_id,
+           "name": sender_name, "text": text, "sent_at": sent_at}
+    if poll_id is not None:
+        msg["poll"] = get_poll(poll_id)  # the page draws a poll card instead of text
+    return msg
+
+
+# --- Polls ---
+
+def create_poll(conv, creator_id, creator_name, question, options):
+    """Save a poll and the message that shows it. Returns that message."""
+    cur = _conn.execute(
+        "INSERT INTO polls (conv, creator_id, question, options, created_at) VALUES (?, ?, ?, ?, ?)",
+        (conv, int(creator_id), question, json.dumps(options), _now().isoformat(timespec="seconds")),
+    )
+    # The message text is a plain-text version, e.g. for anything that can't draw polls.
+    return save_message(conv, creator_id, creator_name, "Poll: " + question, poll_id=cur.lastrowid)
+
+
+def get_poll(poll_id):
+    """
+    A poll with everyone's votes, or None if there's no such poll:
+    {id, conv, creator_id, question, closed, options: [{text, voters: [{id, name}]}]}
+    """
+    row = _conn.execute("SELECT * FROM polls WHERE id = ?", (int(poll_id),)).fetchone()
+    if row is None:
+        return None
+    options = [{"text": text, "voters": []} for text in json.loads(row["options"])]
+    for vote in _conn.execute(
+            "SELECT v.option, v.user_id, u.username FROM poll_votes v "
+            "JOIN users u ON u.id = v.user_id WHERE v.poll_id = ? ORDER BY u.username", (row["id"],)):
+        if 0 <= vote["option"] < len(options):
+            options[vote["option"]]["voters"].append({"id": str(vote["user_id"]), "name": vote["username"]})
+    return {"id": row["id"], "conv": row["conv"], "creator_id": str(row["creator_id"]),
+            "question": row["question"], "closed": bool(row["closed"]), "options": options}
+
+
+def toggle_vote(poll_id, user_id, option):
+    """
+    Vote for an option. Voting for the option you already chose takes your vote
+    back; choosing a different one moves it. Either way, one vote per person.
+    """
+    row = _conn.execute("SELECT option FROM poll_votes WHERE poll_id = ? AND user_id = ?",
+                        (int(poll_id), int(user_id))).fetchone()
+    if row and row["option"] == option:
+        _conn.execute("DELETE FROM poll_votes WHERE poll_id = ? AND user_id = ?", (int(poll_id), int(user_id)))
+    else:
+        # An upsert, like mark_read: add the vote, or change the one that's there.
+        _conn.execute("""
+            INSERT INTO poll_votes (poll_id, user_id, option) VALUES (?, ?, ?)
+            ON CONFLICT (poll_id, user_id) DO UPDATE SET option = excluded.option
+        """, (int(poll_id), int(user_id), option))
+    _conn.commit()
+
+
+def close_poll(poll_id):
+    _conn.execute("UPDATE polls SET closed = 1 WHERE id = ?", (int(poll_id),))
+    _conn.commit()
