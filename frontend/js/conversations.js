@@ -6,6 +6,7 @@ import { sendJSON } from "./connection.js";
 import { renderSidebar } from "./sidebar.js";
 import { renderTyping } from "./typing.js";
 import { focusInput } from "./composer.js";
+import { buildPollCard } from "./polls.js";
 
 const logs = document.getElementById("logs");
 const titleEl = document.getElementById("title");
@@ -108,7 +109,13 @@ function buildRow(msg, prevSenderId) {
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.textContent = msg.text; // textContent (not innerHTML) so nobody can inject HTML
+  if (msg.poll) {
+    // A poll: draw its card instead of text (see polls.js).
+    bubble.classList.add("poll-bubble");
+    bubble.appendChild(buildPollCard(msg.poll));
+  } else {
+    bubble.textContent = msg.text; // textContent (not innerHTML) so nobody can inject HTML
+  }
   row.appendChild(bubble);
 
   const time = document.createElement("div");
