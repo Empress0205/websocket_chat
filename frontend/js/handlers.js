@@ -14,7 +14,7 @@ import { setSendEnabled } from "./composer.js";
 import { showTyping, clearTyping } from "./typing.js";
 import { renderAdmin, adminMessage, isAdminOpen, setAdminButton } from "./admin.js";
 import { updatePoll } from "./polls.js";
-import { handleBoardMessage, boardReconnected } from "./board.js";
+import { handleBoardMessage, boardReconnected, showBoardActivity } from "./board.js";
 
 export function handleMessage(msg) {
   switch (msg.type) {
@@ -69,6 +69,10 @@ export function handleMessage(msg) {
     case "board_cursor":
       // Everything to do with the drawing board (see board.js).
       return handleBoardMessage(msg);
+
+    case "board_activity":
+      // Someone is drawing on this conversation's board and ours is closed.
+      return showBoardActivity(msg);
 
     case "poll_update":
       // Someone voted or the poll was closed: redraw it with the new totals.
