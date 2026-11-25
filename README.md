@@ -144,6 +144,11 @@ Before a real launch, I reviewed the code for what would have to change. This is
 
 ## Features
 
+### Extra: hide the sidebar
+
+- **More room:** the « button at the top of the sidebar folds it into a thin strip down the left edge; » opens it again. Your choice is remembered in this browser.
+- **Nothing missed:** while the sidebar is folded, the » button shows a red badge with how many unread messages are waiting.
+
 ### Extra: live polls
 
 - **Make a poll** in any room or private chat: click **Poll** next to the message box, write the question and the options, and click *Create poll*. A poll has 2 to 10 options. Shortcut: type `/poll Where should we have lunch? | Pizza | Pilau | Chips mayai`.
@@ -161,13 +166,13 @@ What I learned: the **server is the vote counter**. The page only says "I vote f
 - **Tools:** pen, text labels, an eraser (it rubs out a whole line or shape) and a **Shapes** menu, in black, blue, red or green. *Undo* removes your own last line; *Clear* wipes the board for everyone.
 - **Shapes:** line, arrow, rectangle, ellipse, diamond, triangle, cloud and cylinder, enough for a quick network sketch or flowchart (a cloud for the internet, a cylinder for a database or server). Drag to draw; hold **Shift** for a perfect square or circle, or a line at 45°. Others watch the shape stretch as you drag it.
 - **Saved with the conversation.** Close the board or reload the page, and the drawing is still there.
-- **Make it bigger:** drag the panel's left edge to make it wider (the width is remembered; double-click the edge to reset), or click **Expand** to give the board the main space with the chat docked on the right. Everyone still sees the same drawing, just drawn larger or smaller.
+- **A wide board:** the page is landscape. In the side panel, scroll sideways for more room; drag the panel's left edge to make it wider (the width is remembered; double-click the edge to reset), or click **Expand** to give the board the main space with the chat docked on the right, where it shows nearly all of it. Everyone still sees the same drawing, just drawn larger or smaller.
 - **Post snapshot to chat** puts a picture of the board into the conversation, frozen as it was, so the chat keeps a record (handy after sketching a network problem).
 
 What I learned:
 
 - **Batching:** a mouse moves 60+ times a second. The page collects points and sends them about 20 times a second, so others see a smooth line without a flood of messages. Drawing has its own rate limit, separate from chat's.
-- **Board units:** every screen is a different size, so points are sent on a fixed 1000 x 1250 board and each page scales it to fit. A line in the middle lands in the middle everywhere.
+- **Board units:** every screen is a different size, so points are sent on a fixed 2000 x 1250 board and each page scales it to the height of its space (scrolling sideways if the space is narrow). A line in the middle lands in the middle everywhere.
 - **Live vs saved:** batches are passed on straight away but not saved; the finished line is saved once, when the pen lifts. Everyone then swaps their live copy for the saved one.
 - **Two kinds of update:** a pen line grows, so each batch *adds* points. A shape is only ever two points (where the drag started and where it is now), so each batch *replaces* the shape. Every shape is drawn from those two points, which is why adding a new one is just a few lines of drawing code.
 - **Not everything is logged:** drawing and pointer messages are never printed by the server, after the stress test showed what logging every message costs.
@@ -342,7 +347,7 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Client → server | `poll_close` | `{ "type": "poll_close", "poll_id": 7 }`. Only the poll's creator or an admin |
 | Server → room / 2 people | `poll_update` | New totals after a vote or a close: `{ "poll": { ... } }` |
 | Client → server | `board_open` / `board_close` | Open the board of a room (`"room": "general"`) or a private chat (`"with": "<user id>"`), or close it |
-| Server → client | `board_state` | Everything saved on that board: `{ "key", "strokes": [{ id, user_id, tool, color, points, text }] }`. Points are `[x1, y1, x2, y2, ...]` on a 1000 x 1250 board |
+| Server → client | `board_state` | Everything saved on that board: `{ "key", "strokes": [{ id, user_id, tool, color, points, text }] }`. Points are `[x1, y1, x2, y2, ...]` on a 2000 x 1250 board |
 | Client → server | `board_draw` | Part of a line as it's drawn: `{ "sid", "tool", "color", "points", "text"?, "done" }`. `"done": true` saves it. `tool` is `pen`, `text`, or a shape: `line`, `arrow`, `rect`, `ellipse`, `diamond`, `triangle`, `cloud`, `cylinder`. A shape always sends its two points |
 | Server → board | `board_draw` / `board_saved` | A batch of someone's live line (`"replace": true` for a shape, meaning "this is the whole shape now"), then the saved line (with its `id`) that replaces it |
 | Client → server | `board_erase` / `board_undo` / `board_clear` | Rub out one line (`"stroke": <id>`), remove my last line, or wipe the board |
