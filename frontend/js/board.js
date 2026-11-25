@@ -15,6 +15,7 @@ import { sendJSON } from "./connection.js";
 
 const W = 2000;
 const H = 1250;
+const BOARD_VERSION = 2;  // the same as VERSION in backend/board.py
 const COLORS = { black: "#111827", blue: "#2563eb", red: "#dc2626", green: "#16a34a" };
 // Shapes are drawn between two points: where the drag started and where it
 // is now. The same list is in backend/board.py.
@@ -52,6 +53,7 @@ const board = {
   pending: [],           // my points not sent yet (pen)
   changed: false,        // my shape changed since it was last sent
   erased: new Set(),     // strokes I've asked to erase (so I ask only once)
+  hiddenId: null,        // a label hidden while its text is being edited
   view: { scale: 1, x: 0, y: 0, dpr: 1, width: 0, height: 0 },
 };
 let strokeCount = 0;
@@ -172,12 +174,14 @@ export function handleBoardMessage(msg) {
     case "board_state": {
       clearTimeout(answerTimer); // the server answered
       board.strokes = new Map(msg.strokes.map(s => [s.id, s]));
-      // A server started before the newest board features doesn't list them
-      // (or sends no list at all): say so, instead of drawing alone silently.
+      // A server started before the newest board changes (missing tools, the
+      // old board size, or an older board version): say so, instead of
+      // drawing alone silently or having drawings pushed back to the old edge.
       const known = new Set(msg.tools || []);
       const missing = ["pen", "text", ...SHAPES].filter(t => !known.has(t));
-      if (missing.length) {
-        setNote("The server is older than this page, so some tools won't be shared. Restart the server.", true);
+      const [w, h] = msg.size || [];
+      if (missing.length || w !== W || h !== H || (msg.version || 0) < BOARD_VERSION) {
+        setNote("The server is older than this page, so the board won't work properly. Restart the server.", true);
       } else {
         setNote(NOTE);
       }
@@ -199,10 +203,11 @@ export function handleBoardMessage(msg) {
       const k = msg.id + ":" + msg.sid;
       let s = board.live.get(k);
       if (!s) board.live.set(k, s = { tool: msg.tool, color: msg.color, text: msg.text, points: [] });
-      // A shape arrives whole each time (it stretches as it's dragged);
-      // a pen line arrives a piece at a time.
+      // A shape arrives whole each time (it stretches as it's dragged), and a
+      // label with its words so far; a pen line arrives a piece at a time.
       if (msg.replace) s.points = msg.points.slice();
       else s.points.push(...msg.points);
+      if (msg.tool === "text") s.text = msg.text;
       break;
     }
 
@@ -303,7 +308,7 @@ function drawBoard() {
   ctx.translate(v.x, v.y);
   ctx.scale(v.scale, v.scale);
   drawPaper(ctx);
-  for (const s of board.strokes.values()) drawStroke(ctx, s);
+  for (const s of board.strokes.values()) if (s.id !== board.hiddenId) drawStroke(ctx, s);
   for (const s of board.live.values()) drawStroke(ctx, s);
   if (board.mine) drawStroke(ctx, board.mine);
   ctx.restore();
@@ -478,7 +483,12 @@ canvas.addEventListener("pointerdown", (e) => {
   // Clicking the board while a label is being typed keeps that label. (The
   // preventDefault above stops the text box losing focus by itself.)
   commitText();
-  if (board.tool === "text") { showTextBox(p); return; }
+  if (board.tool === "text") {
+    // On an existing label: edit it, in its own place. Elsewhere: a new label.
+    const label = textLabelAt(p);
+    showTextBox(label ? { x: label.points[0], y: label.points[1] } : p, label);
+    return;
+  }
   canvas.setPointerCapture(e.pointerId);
   if (board.tool === "eraser") { eraseAt(p); return; }
 
@@ -628,47 +638,117 @@ function distanceToSegment(p, x1, y1, x2, y2) {
 
 // --- Text labels ---
 
-let textBox = null;
-let textPoint = null;  // where on the board the open text box is
+// A label is sent while it's typed (about 10 times a second), so others watch
+// the words appear. Editing a label works the same way: on the first change
+// the old label is erased and the new words are sent live in its place.
+const TEXT_EVERY = 100;   // ms between live updates while typing
 
-function showTextBox(p) {
+let textBox = null;
+let text = null;          // the label being typed: { sid, point, color, original, sent, erased }
+let textTimer = null;
+
+// The newest text label under the pointer, if any (clicking one edits it).
+function textLabelAt(p) {
+  return [...board.strokes.values()].reverse().find(s => s.tool === "text" && touches(s, p));
+}
+
+// Open a text box: empty for a new label, or filled with an existing label's
+// words to edit it. The label itself is hidden meanwhile, so the box sits in its place.
+function showTextBox(p, label = null) {
   commitText(); // a label still being typed is kept, not thrown away
-  textPoint = p;
+  text = { sid: Date.now().toString(36) + (strokeCount++), point: p,
+           color: label ? label.color : board.color, original: label, sent: false, erased: false };
+  board.hiddenId = label ? label.id : null;
+  queueDraw();
   const v = board.view;
+  const size = Math.max(13, TEXT_SIZE * v.scale); // the same size as the label on the board
   textBox = document.createElement("input");
   textBox.className = "board-text";
   textBox.maxLength = 80;
   textBox.placeholder = "Type, then Enter";
-  textBox.style.left = v.x + p.x * v.scale + "px";
-  textBox.style.top = v.y + p.y * v.scale - 16 + "px";
-  textBox.style.color = COLORS[board.color];
+  textBox.value = label ? label.text : "";
+  textBox.style.fontSize = size + "px";
+  textBox.style.left = v.x + p.x * v.scale - 7 + "px";
+  textBox.style.top = v.y + p.y * v.scale - size / 2 - 5 + "px";
+  textBox.style.color = COLORS[text.color];
+  textBox.addEventListener("input", textChanged);
   textBox.addEventListener("keydown", (e) => {
     if (e.key === "Enter") commitText();
-    else if (e.key === "Escape") removeTextBox();
+    else if (e.key === "Escape") removeTextBox(); // puts things back as they were
   });
-  textBox.addEventListener("blur", () => commitText());
+  // Clicking elsewhere on the page finishes the label. Switching to another
+  // window or tab doesn't: the label stays open, and focus comes back to it.
+  const box = textBox;
+  textBox.addEventListener("blur", () => setTimeout(() => {
+    if (textBox === box && document.hasFocus() && document.activeElement !== box) commitText();
+  }, 0));
   wrap.appendChild(textBox);
   textBox.focus();
+  textBox.setSelectionRange(textBox.value.length, textBox.value.length); // cursor at the end
 }
 
-// Save the label being typed (if any) as a text stroke.
+// Send label t's words as they are now. `done` saves it (empty words: nothing is saved).
+function sendText(t, words, done) {
+  clearTimeout(textTimer);
+  textTimer = null;
+  sendJSON({ type: "board_draw", sid: t.sid, tool: "text", color: t.color, text: words,
+             points: [t.point.x, t.point.y], done });
+  t.sent = true;
+}
+
+// Editing an existing label: the first change erases the old one, so others
+// see the new words being typed in its place instead of on top of it.
+function eraseOriginal(t) {
+  if (t.original && !t.erased) {
+    sendJSON({ type: "board_erase", stroke: t.original.id });
+    t.erased = true;
+  }
+}
+
+function textChanged() {
+  const t = text;
+  if (!t) return;
+  if (!t.sent && !t.original && !textBox.value.trim()) return; // nothing typed yet
+  eraseOriginal(t);
+  // Send at most every TEXT_EVERY ms, always ending with the latest words.
+  if (!textTimer) textTimer = setTimeout(() => { if (text === t && textBox) sendText(t, textBox.value, false); }, TEXT_EVERY);
+}
+
+// Finish the label (Enter, a click elsewhere, closing the board...).
 function commitText() {
   if (!textBox) return;
-  const text = textBox.value.trim();
-  const p = textPoint;
-  removeTextBox();
-  if (!text) return;
-  const sid = Date.now().toString(36) + (strokeCount++);
-  const stroke = { sid, tool: "text", color: board.color, text, points: [p.x, p.y] };
-  sendJSON({ type: "board_draw", sid, tool: "text", color: board.color, text, points: [p.x, p.y], done: true });
-  board.live.set(state.myId + ":" + sid, stroke);
-  queueDraw();
+  const t = text;
+  const words = textBox.value.trim();
+  closeTextBox();
+  if (t.original && !t.erased && words === t.original.text) return; // opened, but nothing changed
+  eraseOriginal(t);                                                  // editing: the old one goes
+  if (!t.sent && !t.erased && !words) return;                        // never typed anything
+  sendText(t, words, true);                                          // empty words: nothing saved
+  if (words) {
+    // Keep showing it until the server sends back the saved copy.
+    board.live.set(state.myId + ":" + t.sid, { tool: "text", color: t.color, text: words, points: [t.point.x, t.point.y] });
+    queueDraw();
+  }
 }
 
+// Escape (or switching away): put things back as they were.
 function removeTextBox() {
+  if (!textBox) return;
+  const t = text;
+  closeTextBox();
+  if (t.original && t.erased) sendText(t, t.original.text, true); // restore the label as it was
+  else if (!t.original && t.sent) sendText(t, "", true);         // tell others to drop the half-typed label
+}
+
+function closeTextBox() {
   const box = textBox;
   textBox = null;   // first, so the blur from remove() doesn't commit it again
+  clearTimeout(textTimer);
+  textTimer = null;
+  text = null;
+  board.hiddenId = null;  // show the label again (if it was being edited)
   box?.remove();
+  queueDraw();
 }
 
 // --- The toolbar ---
