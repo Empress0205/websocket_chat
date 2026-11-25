@@ -7,6 +7,7 @@ import { renderSidebar } from "./sidebar.js";
 import { renderTyping } from "./typing.js";
 import { focusInput } from "./composer.js";
 import { buildPollCard } from "./polls.js";
+import { boardFollow, buildSnapshotCard } from "./board.js";
 
 const logs = document.getElementById("logs");
 const titleEl = document.getElementById("title");
@@ -47,6 +48,7 @@ export function openConversation(key) {
   renderTitle();
   renderSidebar();
   renderTyping();
+  boardFollow(key); // an open board switches to this conversation's board
   focusInput();
 }
 
@@ -113,6 +115,10 @@ function buildRow(msg, prevSenderId) {
     // A poll: draw its card instead of text (see polls.js).
     bubble.classList.add("poll-bubble");
     bubble.appendChild(buildPollCard(msg.poll));
+  } else if (msg.board) {
+    // A board snapshot: draw the picture (see board.js).
+    bubble.classList.add("poll-bubble");
+    bubble.appendChild(buildSnapshotCard(msg.board));
   } else {
     bubble.textContent = msg.text; // textContent (not innerHTML) so nobody can inject HTML
   }
