@@ -8,6 +8,7 @@ Then open index.html, log in with an account your admin created, and chat.
 import asyncio
 import json
 import re
+import time
 
 import websockets
 
@@ -51,6 +52,7 @@ def new_client():
         "board_limit": RateLimiter(capacity=60, per_second=40),
         "board": None,         # the conversation whose board is open, if any
         "drawing": {},         # strokes being drawn right now, by the page's stroke id
+        "announced": {},       # when we last said "<name> is drawing", per board
     }
 
 
@@ -522,6 +524,32 @@ async def send_board_viewers(conv):
     await send_to_board(conv, {"type": "board_viewers", "viewers": viewers})
 
 
+ANNOUNCE_EVERY = 20  # seconds between "<name> is drawing" notices from one person
+
+
+async def announce_drawing(ws, conv):
+    """
+    Someone started drawing: tell the people in that conversation who don't
+    have the board open, so they can open it and watch. Live drawing itself
+    only goes to people with the board open (it's many messages a second).
+    """
+    me = clients[ws]
+    now = time.monotonic()
+    if now - me["announced"].get(conv, float("-inf")) < ANNOUNCE_EVERY:
+        return  # told them recently
+    me["announced"][conv] = now
+    if conv.startswith("dm:"):
+        targets = [find_client(u) for u in polls.people_in(conv) if u != me["id"]]
+    else:
+        targets = [w for w, info in clients.items() if info["room"] == conv]
+    for w in targets:
+        info = clients.get(w)
+        if w is None or w is ws or info is None or info["board"] == conv:
+            continue
+        await send(w, {"type": "board_activity", "key": page_key(info["id"], conv),
+                       "id": me["id"], "name": me["name"]})
+
+
 async def leave_board(ws):
     me = clients[ws]
     old, me["board"], me["drawing"] = me["board"], None, {}
@@ -545,7 +573,10 @@ async def handle_board(ws, msg):
             return
         await leave_board(ws)
         me["board"] = conv
-        await send(ws, {"type": "board_state", "key": page_key(me["id"], conv), "strokes": db.get_strokes(conv)})
+        # "tools" tells the page what this server can share, so a page newer
+        # than the server can warn instead of silently drawing alone.
+        await send(ws, {"type": "board_state", "key": page_key(me["id"], conv),
+                        "strokes": db.get_strokes(conv), "tools": list(board.TOOLS)})
         await send_board_viewers(conv)
         return
 
@@ -579,6 +610,7 @@ async def handle_board(ws, msg):
                 await send(ws, {"type": "error", "text": error})
                 return
             me["drawing"][sid] = stroke
+            await announce_drawing(ws, conv)
         points = board.clean_points(msg.get("points"))
         if points is None:
             return
