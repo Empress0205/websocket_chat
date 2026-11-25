@@ -4,15 +4,18 @@ import { state } from "./state.js";
 import { sendJSON } from "./connection.js";
 import { addInfo } from "./conversations.js";
 import { isPollCommand, parsePollCommand, createPoll, openPollDialog } from "./polls.js";
+import { toggleBoard } from "./board.js";
 
 const sendBtn = document.getElementById("send");
 const pollBtn = document.getElementById("poll-btn");
+const boardBtn = document.getElementById("board-btn");
 const textInput = document.getElementById("text");
 
 // Send is only allowed while connected and logged in (see connection.js).
 export function setSendEnabled(enabled) {
   sendBtn.disabled = !enabled;
   pollBtn.disabled = !enabled;
+  boardBtn.disabled = !enabled;
 }
 
 export function focusInput() {
@@ -46,4 +49,5 @@ function send() {
 
 sendBtn.onclick = send;
 pollBtn.onclick = openPollDialog; // the "New poll" form (polls.js)
+boardBtn.onclick = toggleBoard;   // the drawing board in the side panel (board.js)
 textInput.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
