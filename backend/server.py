@@ -14,6 +14,7 @@ import websockets
 import auth  # our own file: passwords and login tokens (auth.py)
 import db  # our own file: saves and loads data (db.py)
 import polls  # our own file: the rules for polls (polls.py)
+import board  # our own file: the rules for the drawing board (board.py)
 from ratelimit import RateLimiter, RateLimiterGroup  # our own file (ratelimit.py)
 
 DEFAULT_ROOM = "general"
@@ -46,6 +47,10 @@ def new_client():
         "message_limit": RateLimiter(capacity=5, per_second=1),
         # At most 5 login attempts, then 1 every 30 seconds (slows password guessing).
         "login_limit": RateLimiter(capacity=5, per_second=1 / 30),
+        # Drawing sends many small messages, so it gets its own, bigger limit.
+        "board_limit": RateLimiter(capacity=60, per_second=40),
+        "board": None,         # the conversation whose board is open, if any
+        "drawing": {},         # strokes being drawn right now, by the page's stroke id
     }
 
 
@@ -355,11 +360,14 @@ async def handle_message(ws, msg):
         # Everything below needs the client to have joined a room first.
         print("Ignored message before join:", for_log(msg))
 
-    elif msg_type in ("chat", "dm", "poll_create", "poll_vote") and not me["message_limit"].allow():
+    elif msg_type in ("chat", "dm", "poll_create", "poll_vote", "board_snapshot") and not me["message_limit"].allow():
         await send(ws, {"type": "error", "text": "You're sending messages too fast. Wait a moment."})
 
     elif msg_type.startswith("poll_"):
         await handle_poll(ws, msg)
+
+    elif msg_type.startswith("board_"):
+        await handle_board(ws, msg)
 
     elif msg_type == "chat":
         text = str(msg.get("text") or "").strip()[:MAX_TEXT]
@@ -492,6 +500,145 @@ async def handle_poll(ws, msg):
     await send_to_conv(poll["conv"], {"type": "poll_update", "poll": db.get_poll(poll["id"])})
 
 
+# --- Drawing board ---
+# Each conversation (room or private chat) has one board. People who have it
+# open are its "viewers": everything drawn is passed to them as it happens.
+
+def board_viewers(conv):
+    return [(ws, info) for ws, info in list(clients.items()) if info["board"] == conv]
+
+
+async def send_to_board(conv, message: dict, exclude=None):
+    """Send to everyone with this board open. Each page names the board its own
+    way ("dm:<other person>"), so the right "key" is added for each one."""
+    for ws, info in board_viewers(conv):
+        if ws is not exclude:
+            await send(ws, {**message, "key": page_key(info["id"], conv)})
+
+
+async def send_board_viewers(conv):
+    """Tell a board's viewers who is looking at it right now."""
+    viewers = [{"id": info["id"], "name": info["name"]} for _, info in board_viewers(conv)]
+    await send_to_board(conv, {"type": "board_viewers", "viewers": viewers})
+
+
+async def leave_board(ws):
+    me = clients[ws]
+    old, me["board"], me["drawing"] = me["board"], None, {}
+    if old:
+        await send_board_viewers(old)
+
+
+async def handle_board(ws, msg):
+    me = clients[ws]
+    kind = msg.get("type")
+
+    if kind == "board_open":
+        # Which conversation: a room, or a private chat ("with" a person).
+        if msg.get("with"):
+            other = valid_user_id(msg.get("with"))
+            conv = db.dm_key(me["id"], other) if other and other != me["id"] and db.get_user(other) else None
+        else:
+            conv = clean_room(msg.get("room"))
+        if conv is None or not polls.can_use(me["id"], conv):
+            await send(ws, {"type": "error", "text": "You can't open that board."})
+            return
+        await leave_board(ws)
+        me["board"] = conv
+        await send(ws, {"type": "board_state", "key": page_key(me["id"], conv), "strokes": db.get_strokes(conv)})
+        await send_board_viewers(conv)
+        return
+
+    if kind == "board_close":
+        await leave_board(ws)
+        return
+
+    conv = me["board"]
+    if conv is None:
+        return  # no board open: nothing to draw on
+    if kind in ("board_draw", "board_cursor") and not me["board_limit"].allow():
+        return  # far too fast: drop it quietly
+
+    if kind == "board_cursor":
+        # Where my pointer is, so others see a labelled cursor. Not saved.
+        spot = board.clean_cursor(msg.get("x"), msg.get("y"))
+        if spot:
+            await send_to_board(conv, {"type": "board_cursor", "id": me["id"], "name": me["name"],
+                                       "x": spot[0], "y": spot[1]}, exclude=ws)
+
+    elif kind == "board_draw":
+        # A stroke arrives in small batches while it's being drawn. Others see
+        # each batch at once; the finished stroke is saved when "done" comes.
+        sid = str(msg.get("sid") or "")[:24]
+        stroke = me["drawing"].get(sid)
+        if stroke is None:
+            if len(me["drawing"]) >= 5:
+                me["drawing"].clear()  # forget strokes that were never finished
+            stroke, error = board.start_stroke(msg.get("tool"), msg.get("color"), msg.get("text"))
+            if error:
+                await send(ws, {"type": "error", "text": error})
+                return
+            me["drawing"][sid] = stroke
+        points = board.clean_points(msg.get("points"))
+        if points is None:
+            return
+        if len(stroke["points"]) + len(points) > board.MAX_POINTS:
+            points = []  # long enough: ignore the rest of this line
+        stroke["points"] += points
+        live = {"type": "board_draw", "id": me["id"], "sid": sid, "tool": stroke["tool"],
+                "color": stroke["color"], "text": stroke["text"], "points": points}
+        await send_to_board(conv, live, exclude=ws)
+
+        if msg.get("done"):
+            del me["drawing"][sid]
+            saved = None
+            if not polls.can_use(me["id"], conv):
+                await leave_board(ws)  # access was taken away while drawing
+                return
+            if db.count_strokes(conv) >= board.MAX_STROKES:
+                await send(ws, {"type": "error", "text": "The board is full. Clear it to keep drawing."})
+            elif board.is_complete(stroke):
+                saved = db.add_stroke(conv, me["id"], stroke["tool"], stroke["color"], stroke["points"], stroke["text"])
+            # Everyone (me too) swaps the live line for the saved one, or drops it.
+            await send_to_board(conv, {"type": "board_saved", "id": me["id"], "sid": sid, "stroke": saved})
+
+    elif not polls.can_use(me["id"], conv):
+        await leave_board(ws)  # access was taken away: close the board
+
+    elif kind == "board_erase":
+        stroke_id = msg.get("stroke")
+        if isinstance(stroke_id, int) and db.delete_stroke(conv, stroke_id):
+            await send_to_board(conv, {"type": "board_removed", "ids": [stroke_id]})
+
+    elif kind == "board_undo":
+        stroke_id = db.delete_last_stroke(conv, me["id"])
+        if stroke_id is not None:
+            await send_to_board(conv, {"type": "board_removed", "ids": [stroke_id]})
+
+    elif kind == "board_clear":
+        db.clear_board(conv)
+        await send_to_board(conv, {"type": "board_cleared", "by": me["name"]})
+
+    elif kind == "board_snapshot":
+        # Post a picture of the board into the conversation, like a message.
+        if db.count_strokes(conv) == 0:
+            await send(ws, {"type": "error", "text": "The board is empty. Draw something first."})
+            return
+        saved = db.create_snapshot(conv, me["id"], me["name"])
+        if conv.startswith("dm:"):
+            other = next(u for u in polls.people_in(conv) if u != me["id"])
+            await send_to_conv(conv, {**saved, "type": "dm", "to": other})
+        else:
+            await send_to_room(conv, saved)
+
+    else:
+        print("Ignored unknown message:", for_log(msg))
+
+
+# Messages that arrive many times a second: never print them (see the stress test).
+QUIET = ("ping", "board_draw", "board_cursor")
+
+
 async def handler(ws):
     """Runs once per client, for as long as that client stays connected."""
     clients[ws] = new_client()
@@ -505,7 +652,8 @@ async def handler(ws):
                 msg = json.loads(raw)
                 if not isinstance(msg, dict):
                     raise ValueError("message is not a JSON object")
-                print("Received:", for_log(msg))
+                if msg.get("type") not in QUIET:
+                    print("Received:", for_log(msg))
                 await handle_message(ws, msg)
             except (json.JSONDecodeError, ValueError) as e:
                 print("Ignored bad message -", e)
@@ -514,6 +662,8 @@ async def handler(ws):
     finally:
         me = clients.pop(ws)
         print(f"Client disconnected ({len(clients)} online)")
+        if me["board"]:
+            await send_board_viewers(me["board"])  # they're no longer on that board
         # If they just moved to another tab, they haven't really left.
         if me["room"] is not None and not me["replaced"]:
             await send_to_room(me["room"], {"type": "info", "room": me["room"],
