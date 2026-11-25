@@ -530,6 +530,47 @@ body {
   border-bottom: 1px solid #e6e9ee;
 }
 .tool-sep { width: 1px; height: 22px; background: #e6e9ee; margin: 0 6px; }
+
+/* Shapes button and its menu */
+.shape-picker { position: relative; }
+.icon-btn.shape-btn { width: 46px; gap: 2px; }
+#shape-btn-icon { display: flex; }
+#shape-btn-icon svg { width: 16px; height: 16px; }
+.icon-btn .caret { width: 8px; height: 8px; }
+.shape-menu {
+  position: absolute;
+  top: 42px;
+  left: 0;
+  z-index: 5;
+  width: 220px;
+  padding: 6px;
+  background: #fff;
+  border: 1px solid #e6e9ee;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(17, 24, 39, 0.12);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+}
+.shape-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  color: #374151;
+  text-align: left;
+  cursor: pointer;
+}
+.shape-menu button svg { width: 16px; height: 16px; flex-shrink: 0; }
+.shape-menu button:hover, .shape-menu button:focus-visible { background: #f3f5f8; outline: none; }
+.shape-menu button.current { background: #dbeafe; color: #1d4ed8; }
+.shape-tip { grid-column: 1 / -1; margin: 4px 6px 2px; font-size: 0.72rem; color: #6b7280; }
 .tool-gap { flex: 1; }
 .swatch {
   width: 24px;
