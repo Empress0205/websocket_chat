@@ -158,7 +158,8 @@ What I learned: the **server is the vote counter**. The page only says "I vote f
 
 - **Click Board** next to the message box. The board opens in a panel beside the chat, so you can keep talking while you sketch. Each room and private chat has its own board, and only people who can see that conversation can see its board.
 - **Draw together, live.** Everyone with the board open sees each line as it's drawn, plus everyone's pointer with their name.
-- **Tools:** pen, straight arrow, text labels and an eraser (it rubs out a whole line), in black, blue, red or green. *Undo* removes your own last line; *Clear* wipes the board for everyone.
+- **Tools:** pen, text labels, an eraser (it rubs out a whole line or shape) and a **Shapes** menu, in black, blue, red or green. *Undo* removes your own last line; *Clear* wipes the board for everyone.
+- **Shapes:** line, arrow, rectangle, ellipse, diamond, triangle, cloud and cylinder, enough for a quick network sketch or flowchart (a cloud for the internet, a cylinder for a database or server). Drag to draw; hold **Shift** for a perfect square or circle, or a line at 45°. Others watch the shape stretch as you drag it.
 - **Saved with the conversation.** Close the board or reload the page, and the drawing is still there.
 - **Post snapshot to chat** puts a picture of the board into the conversation, frozen as it was, so the chat keeps a record (handy after sketching a network problem).
 
@@ -167,6 +168,7 @@ What I learned:
 - **Batching:** a mouse moves 60+ times a second. The page collects points and sends them about 20 times a second, so others see a smooth line without a flood of messages. Drawing has its own rate limit, separate from chat's.
 - **Board units:** every screen is a different size, so points are sent on a fixed 1000 x 1250 board and each page scales it to fit. A line in the middle lands in the middle everywhere.
 - **Live vs saved:** batches are passed on straight away but not saved; the finished line is saved once, when the pen lifts. Everyone then swaps their live copy for the saved one.
+- **Two kinds of update:** a pen line grows, so each batch *adds* points. A shape is only ever two points (where the drag started and where it is now), so each batch *replaces* the shape. Every shape is drawn from those two points, which is why adding a new one is just a few lines of drawing code.
 - **Not everything is logged:** drawing and pointer messages are never printed by the server, after the stress test showed what logging every message costs.
 
 ### Added in Phase 5
@@ -340,8 +342,8 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Server → room / 2 people | `poll_update` | New totals after a vote or a close: `{ "poll": { ... } }` |
 | Client → server | `board_open` / `board_close` | Open the board of a room (`"room": "general"`) or a private chat (`"with": "<user id>"`), or close it |
 | Server → client | `board_state` | Everything saved on that board: `{ "key", "strokes": [{ id, user_id, tool, color, points, text }] }`. Points are `[x1, y1, x2, y2, ...]` on a 1000 x 1250 board |
-| Client → server | `board_draw` | Part of a line as it's drawn: `{ "sid", "tool", "color", "points", "text"?, "done" }`. `"done": true` saves it |
-| Server → board | `board_draw` / `board_saved` | A batch of someone's live line, then the saved line (with its `id`) that replaces it |
+| Client → server | `board_draw` | Part of a line as it's drawn: `{ "sid", "tool", "color", "points", "text"?, "done" }`. `"done": true` saves it. `tool` is `pen`, `text`, or a shape: `line`, `arrow`, `rect`, `ellipse`, `diamond`, `triangle`, `cloud`, `cylinder`. A shape always sends its two points |
+| Server → board | `board_draw` / `board_saved` | A batch of someone's live line (`"replace": true` for a shape, meaning "this is the whole shape now"), then the saved line (with its `id`) that replaces it |
 | Client → server | `board_erase` / `board_undo` / `board_clear` | Rub out one line (`"stroke": <id>`), remove my last line, or wipe the board |
 | Server → board | `board_removed` / `board_cleared` | Lines gone (`"ids"`), or the board wiped (`"by"` who) |
 | Client ↔ server | `board_cursor` | Where someone's pointer is, about 12 times a second: `{ "x", "y" }`, passed on with their `id` and `name` |
