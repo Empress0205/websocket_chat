@@ -67,9 +67,24 @@
         <button class="icon-btn tool active" data-tool="pen" aria-label="Pen" aria-pressed="true">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5l1-3.5 7.5-7.5 2.5 2.5-7.5 7.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
         </button>
-        <button class="icon-btn tool" data-tool="arrow" aria-label="Arrow" aria-pressed="false">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13L13 3M7 3h6v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        </button>
+        <!-- Shapes: one button that opens a menu, and shows the last shape picked -->
+        <div class="shape-picker">
+          <button id="shape-btn" class="icon-btn tool shape-btn" data-tool="shape" aria-label="Shapes" aria-haspopup="menu" aria-expanded="false" aria-pressed="false" title="Shapes">
+            <span id="shape-btn-icon"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg></span>
+            <svg class="caret" viewBox="0 0 8 8" aria-hidden="true"><path d="M1.5 3l2.5 2.5L6.5 3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+          <div id="shape-menu" class="shape-menu hidden" role="menu" aria-label="Shapes">
+            <button role="menuitem" data-shape="line"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13L13 3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>Line</button>
+            <button role="menuitem" data-shape="arrow"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 13L13 3M7 3h6v6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>Arrow</button>
+            <button role="menuitem" data-shape="rect"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2.5" y="3.5" width="11" height="9" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Rectangle</button>
+            <button role="menuitem" data-shape="ellipse"><svg viewBox="0 0 16 16" aria-hidden="true"><ellipse cx="8" cy="8" rx="5.8" ry="4.8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>Ellipse</button>
+            <button role="menuitem" data-shape="diamond"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2l6 6-6 6-6-6z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Diamond</button>
+            <button role="menuitem" data-shape="triangle"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5l6 11H2z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>Triangle</button>
+            <button role="menuitem" data-shape="cloud"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.5 12.5C2.3 12.5 1.6 9.8 3.3 8.8 2.9 6.4 5.6 5 7.2 6.4 8 3.6 12.5 3.9 12.3 7.2 14.8 7.6 14.6 12.5 11.8 12.5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>Cloud</button>
+            <button role="menuitem" data-shape="cylinder"><svg viewBox="0 0 16 16" aria-hidden="true"><ellipse cx="8" cy="4" rx="5" ry="1.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M3 4v8c0 1 2.2 1.8 5 1.8s5-.8 5-1.8V4" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>Cylinder</button>
+            <p class="shape-tip">Hold Shift for a perfect square or circle, or a straight line.</p>
+          </div>
+        </div>
         <button class="icon-btn tool" data-tool="text" aria-label="Text" aria-pressed="false">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h10M8 3.5v10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
         </button>
