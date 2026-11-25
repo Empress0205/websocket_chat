@@ -317,6 +317,120 @@ body {
 #send:hover { background: #2563eb; }
 #send:disabled { background: #93c5fd; cursor: default; }
 
+/* Poll button next to the message box */
+.poll-icon { width: 15px; height: 15px; flex-shrink: 0; }
+#poll-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#poll-btn:hover { background: #dbeafe; }
+#poll-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* The "New poll" form: same overlay and card as the Admin panel */
+#poll-dialog {
+  position: fixed; inset: 0; z-index: 9;
+  background: rgba(17, 24, 39, 0.35);
+  display: flex; align-items: center; justify-content: center;
+}
+#poll-form { gap: 10px; }
+.field-label { font-size: 0.75rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #6b7280; margin-top: 4px; }
+.field {
+  width: 100%; box-sizing: border-box; padding: 9px 11px;
+  border: 1px solid #e6e9ee; border-radius: 8px; font-size: 0.95rem;
+}
+.field:focus { outline: none; border-color: #3b82f6; }
+#poll-options { display: flex; flex-direction: column; gap: 8px; }
+.poll-option-row { display: flex; align-items: center; gap: 6px; }
+.dialog-close { border: none; background: none; font-size: 1.4rem; line-height: 1; cursor: pointer; color: #6b7280; padding: 0 4px; }
+.dialog-close:hover { color: #111827; }
+.invisible { visibility: hidden; }
+.link-button { align-self: flex-start; border: none; background: none; color: #3b82f6; font-weight: 600; cursor: pointer; padding: 2px 0; }
+.link-button:hover { text-decoration: underline; }
+#poll-error { align-self: stretch; margin: 0; }
+.dialog-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.dialog-actions .muted { flex: 1; }
+.dialog-actions .primary, .dialog-actions .secondary {
+  padding: 8px 16px; border-radius: 8px; font-weight: 600; cursor: pointer;
+}
+.dialog-actions .primary { border: none; background: #3b82f6; color: #fff; }
+.dialog-actions .primary:hover { background: #2563eb; }
+.dialog-actions .secondary { border: 1px solid #e6e9ee; background: #fff; color: #374151; }
+.dialog-actions .secondary:hover { background: #f3f5f8; }
+
+/* Poll cards: always white, whoever made them, so the bars are easy to read */
+.bubble.poll-bubble {
+  background: #fff;
+  color: #111827;
+  border: 1px solid #e6e9ee;
+  padding: 12px;
+  white-space: normal;
+  min-width: 260px;
+}
+.dm-log .mine .bubble.poll-bubble { background: #fff; }
+.mine .bubble.poll-bubble { border-color: #bfdbfe; }
+.poll { display: flex; flex-direction: column; gap: 6px; }
+.poll-question { display: flex; align-items: flex-start; gap: 7px; font-weight: 600; margin-bottom: 4px; }
+.poll-question .poll-icon { color: #3b82f6; margin-top: 2px; }
+.poll-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid #e6e9ee;
+  border-radius: 10px;
+  background: #f8fafc;
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+}
+.poll-option:hover:not(:disabled) { border-color: #93c5fd; }
+.poll-option:disabled { cursor: default; }
+.poll-option.mine { border-color: #3b82f6; }
+.poll-option.winner { border-color: #22c55e; font-weight: 600; }
+.poll-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: #dbeafe;
+  transition: width 0.3s ease;  /* bars slide when the votes change */
+}
+.poll-option.winner .poll-fill { background: #dcfce7; }
+.poll-label, .poll-count { position: relative; }  /* above the bar */
+.poll-label { flex: 1; }
+.poll-count { font-size: 0.78rem; color: #6b7280; white-space: nowrap; }
+.poll-voters { font-size: 0.72rem; color: #6b7280; margin: -2px 4px 2px; }
+.poll-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.75rem;
+  color: #9ca3af;
+  margin-top: 2px;
+}
+.poll-close {
+  border: 1px solid #e6e9ee;
+  border-radius: 999px;
+  background: #fff;
+  padding: 3px 10px;
+  font-size: 0.75rem;
+  color: #6b7280;
+  cursor: pointer;
+}
+.poll-close:hover { background: #f3f5f8; }
+
 /* Small screens: put the sidebar above the chat */
 @media (max-width: 640px) {
   .app { flex-direction: column; height: 100vh; max-height: none; border-radius: 0; }
