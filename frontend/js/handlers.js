@@ -14,6 +14,7 @@ import { setSendEnabled } from "./composer.js";
 import { showTyping, clearTyping } from "./typing.js";
 import { renderAdmin, adminMessage, isAdminOpen, setAdminButton } from "./admin.js";
 import { updatePoll } from "./polls.js";
+import { handleBoardMessage, boardReconnected } from "./board.js";
 
 export function handleMessage(msg) {
   switch (msg.type) {
@@ -58,6 +59,16 @@ export function handleMessage(msg) {
       clearTyping(msg.id);
       return;
     }
+
+    case "board_state":
+    case "board_viewers":
+    case "board_draw":
+    case "board_saved":
+    case "board_removed":
+    case "board_cleared":
+    case "board_cursor":
+      // Everything to do with the drawing board (see board.js).
+      return handleBoardMessage(msg);
 
     case "poll_update":
       // Someone voted or the poll was closed: redraw it with the new totals.
@@ -149,4 +160,5 @@ function onLoggedIn(msg) {
   // Go back to the room this tab was in before a reload (the server
   // checks access and falls back to #general if it's not allowed).
   sendJSON({ type: "join", room: sessionStorage.getItem("chatRoom") || "general" });
+  boardReconnected(); // if the board was open before the connection dropped, reopen it
 }
