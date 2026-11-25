@@ -13,6 +13,7 @@ import { showLogin, hideLogin } from "./login.js";
 import { setSendEnabled } from "./composer.js";
 import { showTyping, clearTyping } from "./typing.js";
 import { renderAdmin, adminMessage, isAdminOpen, setAdminButton } from "./admin.js";
+import { updatePoll } from "./polls.js";
 
 export function handleMessage(msg) {
   switch (msg.type) {
@@ -57,6 +58,10 @@ export function handleMessage(msg) {
       clearTyping(msg.id);
       return;
     }
+
+    case "poll_update":
+      // Someone voted or the poll was closed: redraw it with the new totals.
+      return updatePoll(msg.poll);
 
     case "typing":
       return showTyping(msg.id, msg.name, msg.dm ? "dm:" + msg.id : "room:" + msg.room);
