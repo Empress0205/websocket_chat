@@ -6,13 +6,14 @@
 // grow, and saves the finished line when you lift the pen.
 //
 // Every screen is a different size, so all points are in "board units" on a
-// fixed 1000 x 1250 board (the same numbers as backend/board.py). Each page
-// scales the board to fit its own panel.
+// fixed 2000 x 1250 board (the same numbers as backend/board.py). Each page
+// scales the board to fit the height of its panel; a narrow panel scrolls
+// sideways to reach the rest, and the expanded board shows nearly all of it.
 
 import { state } from "./state.js";
 import { sendJSON } from "./connection.js";
 
-const W = 1000;
+const W = 2000;
 const H = 1250;
 const COLORS = { black: "#111827", blue: "#2563eb", red: "#dc2626", green: "#16a34a" };
 // Shapes are drawn between two points: where the drag started and where it
@@ -262,18 +263,27 @@ function setNote(text, sticky = false) {
 
 // --- Drawing on the screen ---
 
-// Fit the 1000 x 1250 board into the panel, keeping its shape.
+// Fit the board to the panel's height. The board is wide, so in the side panel
+// it's wider than the space and you scroll sideways for more room. Expanded,
+// it fills nearly all of the space (centred if there's width to spare).
 function resize() {
-  const rect = wrap.getBoundingClientRect();
   const v = board.view;
+  const areaWidth = wrap.clientWidth;    // inside the scrollbar, if there is one
+  const areaHeight = wrap.clientHeight;
   v.dpr = window.devicePixelRatio || 1;
-  v.width = rect.width;
-  v.height = rect.height;
-  canvas.width = Math.round(rect.width * v.dpr);
-  canvas.height = Math.round(rect.height * v.dpr);
-  v.scale = Math.min(rect.width / W, rect.height / H);
-  v.x = (rect.width - W * v.scale) / 2;
-  v.y = (rect.height - H * v.scale) / 2;
+  v.scale = areaHeight / H;
+  // Only a little too wide (up to 15%)? Fit the width instead: a slightly
+  // smaller board beats a scrollbar that scrolls almost nothing.
+  if (W * v.scale > areaWidth && W * v.scale <= areaWidth * 1.15) v.scale = areaWidth / W;
+  const boardWidth = W * v.scale;
+  v.width = Math.max(areaWidth, boardWidth);
+  v.height = areaHeight;
+  v.x = (v.width - boardWidth) / 2;            // 0 when it scrolls; centred when it fits
+  v.y = (areaHeight - H * v.scale) / 2;        // centred when width-fitted
+  canvas.style.width = v.width + "px";
+  canvas.style.height = v.height + "px";
+  canvas.width = Math.round(v.width * v.dpr);
+  canvas.height = Math.round(v.height * v.dpr);
   queueDraw();
 }
 new ResizeObserver(() => { if (board.open) resize(); }).observe(wrap);
@@ -310,11 +320,12 @@ function drawPaper(c) {
   }
 }
 
-// One stroke, in board units. Also used for snapshot pictures in the chat.
-function drawStroke(c, s) {
+// One stroke, in board units. Also used for snapshot pictures in the chat,
+// which draw lines thicker (`thicker`) so they stay clear when shrunk.
+function drawStroke(c, s, thicker = 1) {
   const p = s.points;
   c.strokeStyle = c.fillStyle = COLORS[s.color] || COLORS.black;
-  c.lineWidth = LINE_WIDTH;
+  c.lineWidth = LINE_WIDTH * thicker;
   c.lineCap = c.lineJoin = "round";
   if (s.tool === "text") {
     if (p.length < 2 || !s.text) return;
@@ -826,7 +837,7 @@ export function buildSnapshotCard(snapshot) {
   title.textContent = "Board snapshot";
   card.appendChild(title);
 
-  const width = 260;
+  const width = 300; // the whole wide board, small
   const picture = document.createElement("canvas");
   picture.className = "snapshot-picture";
   const dpr = window.devicePixelRatio || 1;
@@ -838,7 +849,7 @@ export function buildSnapshotCard(snapshot) {
   const c = picture.getContext("2d");
   c.scale((width / W) * dpr, (width / W) * dpr);
   drawPaper(c);
-  for (const s of snapshot ? snapshot.strokes : []) drawStroke(c, s);
+  for (const s of snapshot ? snapshot.strokes : []) drawStroke(c, s, 2.5);
   card.appendChild(picture);
 
   const open = document.createElement("button");
