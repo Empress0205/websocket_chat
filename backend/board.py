@@ -10,7 +10,10 @@ WIDTH = 1000
 HEIGHT = 1250
 
 COLORS = ("black", "blue", "red", "green")
-TOOLS = ("pen", "arrow", "text")
+# Shapes are drawn between two points: where the drag started and where it is
+# now (a line's two ends, or the opposite corners of the box a shape fills).
+SHAPES = ("line", "arrow", "rect", "ellipse", "diamond", "triangle", "cloud", "cylinder")
+TOOLS = ("pen", "text") + SHAPES
 
 MAX_BATCH = 400       # numbers in one message (200 points)
 MAX_POINTS = 6000     # numbers in one stroke (3000 points)
@@ -53,9 +56,14 @@ def clean_points(points):
 
 
 def is_complete(stroke):
-    """A pen line needs at least one point, an arrow two, a text label one."""
-    needed = 4 if stroke["tool"] == "arrow" else 2
-    return len(stroke["points"]) >= needed
+    """
+    A pen line or text label needs one point. A shape needs its two points,
+    and they mustn't be the same spot (a click isn't a shape).
+    """
+    points = stroke["points"]
+    if stroke["tool"] in SHAPES:
+        return len(points) == 4 and (points[0], points[1]) != (points[2], points[3])
+    return len(points) >= 2
 
 
 def clean_cursor(x, y):
