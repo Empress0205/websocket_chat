@@ -200,6 +200,8 @@ The project is split into a **backend** (the Python server) and a **frontend** (
 │   ├── manage.py          # Admin tasks from the command line
 │   ├── requirements.txt   # Python dependencies
 │   └── chat.db            # The database (created on first run, never committed)
+├── tools/
+│   └── stress_test.py     # Load test: many fake users chatting at once
 └── frontend/
     ├── index.html         # The page layout only
     ├── css/style.css      # All the styling
@@ -310,6 +312,40 @@ By default the server listens on `localhost:8765` and the page connects to `ws:/
 
 - **Server:** edit the host and port in `main()` in `backend/server.py`.
 - **Client:** edit `SERVER_URL` at the top of `frontend/js/connection.js`.
+
+## Stress test
+
+How many people can the chat handle at once? `tools/stress_test.py` finds out. It starts its own copy of the server on a spare port, with a throwaway database, so your real server and `chat.db` are never touched. Then it adds fake users in steps. Each one logs in, joins `#general` and chats, and the script measures how long joining takes and how long each message takes to reach everyone.
+
+```bash
+python tools/stress_test.py                    # 10, 50, 100, then 200 users
+python tools/stress_test.py --no-server-log    # the same, with the server's logging off
+python tools/stress_test.py --steps 10,100,300 --rate 1
+```
+
+To **watch it in the chat page**, stop your normal server first, run `python tools/stress_test.py --watch --steps 10,50`, and log in as `watcher` with the password it prints. The test server then uses port 8765, where the page connects.
+
+### Results (25 November 2026, one laptop)
+
+Every user was in `#general` and sent one message every 2 seconds.
+
+| Users | Join time | Messages/s | Median delay, logging on | Median delay, logging off |
+|---|---|---|---|---|
+| 10 | 0.4 s | 5 | 11 ms | 7 ms |
+| 50 | 1.1 s | 25 | 2,184 ms (a one-off, not repeated) | 17 ms |
+| 100 | 2.7 s | 50 | 78 ms | 63 ms |
+| 200 | 8–9 s | 100 | 4,651 ms, with 119,800 copies still on their way | 2,232 ms, all copies arrived |
+
+What I learned:
+
+- **Up to about 100 users in one room, the chat feels instant.** Between 100 and 200 it falls behind, because one message to a room of 200 people is 200 copies: 100 messages a second becomes 20,000 copies a second.
+- **Logging every message is expensive.** Turning the server's logging off roughly halved the delay at 200 users.
+- **Saving each message on its own is a hidden cost.** Each database commit waits about 4 ms for the disk, so at 100 messages a second the server spends almost half its time waiting. Its CPU looks only 64 % busy, but messages still pile up.
+- **Joining gets slower as the room grows**, from 0.4 s at 10 users to 8–9 s at 200, because every join sends the full online list to everyone.
+- **One server process uses only one CPU core**, however many the computer has.
+- **Nothing crashed.** When overloaded, the server slowed down instead of breaking.
+
+All the fake users run in one Python program on the same laptop as the server, so the 200-user numbers are rough. The fixes (no per-message logging, saving in batches, sending to a room in parallel, fewer online-list updates, and more server processes with Redis) are part of Phase 6.
 
 ## Known limitations and when they get fixed
 
