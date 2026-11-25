@@ -15,7 +15,7 @@ So far it's a Python WebSocket server and a single-page browser client, with no 
 | **3** | Saving messages and showing history | ✅ Done |
 | **4** | Users and authentication | ✅ Done |
 | **5** | Reliability: reconnecting, heartbeats, offline messages, read receipts | ✅ Done |
-| **6** | Deploying online over secure `wss://` | 🔜 Next |
+| **6** | Production readiness and deployment: `wss://`, security, scaling | 🔜 Next |
 
 ### Phase 1: WebSocket basics ✅
 
@@ -104,11 +104,41 @@ What I learned:
 - An SQL **upsert** (`INSERT ... ON CONFLICT DO UPDATE`) to create or update a row in one step.
 - Limiting login attempts **per username**, not per connection, so reconnecting after every few guesses doesn't help an attacker. The trade-off: someone could lock a real user out for a while by guessing wrong on purpose.
 
-### Phase 6: Deployment 🔜
+### Phase 6: Production readiness and deployment 🔜
 
-- Host the server online and serve the page from the same place.
-- Use secure WebSockets (`wss://`) over HTTPS.
-- Look at how to scale past a single server, for example using Redis pub/sub.
+**Goal:** make the app safe and solid enough for real users, then put it online.
+
+Before a real launch, I reviewed the code for what would have to change. This is the plan for the next phase, most important first.
+
+**Security (must fix before going live)**
+
+1. **Use secure WebSockets (`wss://`).** Passwords and login tokens currently travel over plain `ws://`, so anyone on the same network could read them.
+2. **Check the `Origin` header.** The server accepts connections from any website, so a malicious page could open a socket to it. `websockets.serve` takes an `origins=[...]` list for this.
+3. **Move addresses into settings.** The server listens on `localhost:8765` and the page connects to `ws://localhost:8765`, both hard-coded. They should come from environment variables or a config file, so the same code runs on a laptop and on a server.
+4. **Stop logging chat content.** The server prints every message it receives, which would put private conversations in the log files.
+5. **Shorten logins.** Login tokens last 30 days (`SESSION_DAYS` in `auth.py`). For an internal tool, 1 to 7 days is safer.
+6. **Limit message size.** Set a small `max_size` on the server and a maximum message length, so nobody can send huge messages.
+
+**Keeping it running (operations)**
+
+7. **Proper logging** with Python's `logging` module instead of `print`: levels, timestamps, and a place to search the logs.
+8. **A real database and backups.** SQLite keeps everything in one `chat.db` file and allows one writer at a time. With many users, or more than one server, PostgreSQL is a better fit.
+9. **Restart automatically** after a crash or reboot, using Docker or a process manager.
+10. **A health check** so the host can tell whether the server is alive.
+11. **Pin dependency versions.** `requirements.txt` only says `websockets>=12.0`, so a future major release could break the app.
+
+**Scaling past one server**
+
+12. **Share state between servers.** Who is online, rooms and the rate limiter all live in one server's memory, so users on two different servers can't see each other. Redis pub/sub is the usual fix.
+13. **A load balancer** in front of the servers that allows WebSocket upgrades and long-lived connections.
+
+**Nice to have**
+
+14. **Automated tests and CI.** Everything so far has been tested by hand.
+15. **Monitoring:** number of connections, errors and message rates, with alerts.
+16. **Password reset and an audit log for admins,** recording who created accounts and changed room access.
+
+**Where to host it:** not Vercel. Vercel runs short serverless functions, but a WebSocket server must stay running and keep every connection open. Hosts that run long-lived servers, such as Render, Railway or Fly.io, can. A host's disk may be wiped on restart, so the database needs a storage volume or a hosted database.
 
 ---
 
