@@ -15,6 +15,9 @@ import { sendJSON } from "./connection.js";
 const W = 1000;
 const H = 1250;
 const COLORS = { black: "#111827", blue: "#2563eb", red: "#dc2626", green: "#16a34a" };
+// Shapes are drawn between two points: where the drag started and where it
+// is now. The same list is in backend/board.py.
+const SHAPES = new Set(["line", "arrow", "rect", "ellipse", "diamond", "triangle", "cloud", "cylinder"]);
 const LINE_WIDTH = 5;     // board units
 const TEXT_SIZE = 34;     // board units
 const SEND_EVERY = 50;    // ms between batches while drawing
@@ -41,10 +44,12 @@ const board = {
   live: new Map(),       // others' strokes still being drawn: "<user id>:<sid>" -> stroke
   cursors: new Map(),    // others' pointers: user id -> { x, y, name, at }
   viewers: [],
-  tool: "pen",
+  tool: "pen",           // pen, text, eraser, or one of the SHAPES
+  shape: "rect",         // the shape the Shapes button picks
   color: "blue",
   mine: null,            // the stroke I'm drawing right now
-  pending: [],           // my points not sent yet
+  pending: [],           // my points not sent yet (pen)
+  changed: false,        // my shape changed since it was last sent
   erased: new Set(),     // strokes I've asked to erase (so I ask only once)
   view: { scale: 1, x: 0, y: 0, dpr: 1, width: 0, height: 0 },
 };
@@ -74,10 +79,10 @@ export function openBoard() {
 
 export function closeBoard() {
   if (!board.open) return;
+  commitText(); // a label still being typed is saved before the board closes
   board.open = false;
   board.key = null;
   cancelMyStroke();
-  removeTextBox();
   panel.classList.add("hidden");
   app.classList.remove("with-panel");
   boardBtn.setAttribute("aria-pressed", "false");
@@ -87,8 +92,11 @@ export function closeBoard() {
 
 // Ask the server for the board of a conversation (it checks we're allowed in).
 function requestBoard(key) {
+  // Save a label still being typed to the board it was typed on, before
+  // switching (messages arrive in order, so it lands on the old board).
+  if (board.key && board.key !== key) commitText();
+  else removeTextBox();
   cancelMyStroke();
-  removeTextBox();
   board.key = key;
   board.strokes.clear();
   board.live.clear();
@@ -147,7 +155,10 @@ export function handleBoardMessage(msg) {
       const k = msg.id + ":" + msg.sid;
       let s = board.live.get(k);
       if (!s) board.live.set(k, s = { tool: msg.tool, color: msg.color, text: msg.text, points: [] });
-      s.points.push(...msg.points);
+      // A shape arrives whole each time (it stretches as it's dragged);
+      // a pen line arrives a piece at a time.
+      if (msg.replace) s.points = msg.points.slice();
+      else s.points.push(...msg.points);
       break;
     }
 
@@ -267,18 +278,9 @@ function drawStroke(c, s) {
     c.font = `600 ${TEXT_SIZE}px system-ui, "Segoe UI", sans-serif`;
     c.textBaseline = "middle";
     c.fillText(s.text, p[0], p[1]);
-  } else if (s.tool === "arrow") {
+  } else if (SHAPES.has(s.tool)) {
     if (p.length < 4) return;
-    const [x1, y1, x2, y2] = [p[0], p[1], p[p.length - 2], p[p.length - 1]];
-    const angle = Math.atan2(y2 - y1, x2 - x1);
-    c.beginPath();
-    c.moveTo(x1, y1);
-    c.lineTo(x2, y2);
-    for (const side of [-1, 1]) {  // the two sides of the arrow head
-      c.moveTo(x2, y2);
-      c.lineTo(x2 - 26 * Math.cos(angle + side * 0.45), y2 - 26 * Math.sin(angle + side * 0.45));
-    }
-    c.stroke();
+    drawShape(c, s.tool, p[0], p[1], p[p.length - 2], p[p.length - 1]);
   } else {
     if (p.length < 2) return;
     c.beginPath();
@@ -291,6 +293,85 @@ function drawStroke(c, s) {
     if (p.length > 2) c.lineTo(p[p.length - 2], p[p.length - 1]);
     c.stroke();
   }
+}
+
+// A shape between two points (ax, ay) and (bx, by). Lines and arrows go from
+// one to the other; every other shape fills the box with those two corners.
+function drawShape(c, tool, ax, ay, bx, by) {
+  const x = Math.min(ax, bx), y = Math.min(ay, by);
+  const w = Math.abs(bx - ax), h = Math.abs(by - ay);
+  const cx = x + w / 2, cy = y + h / 2;
+  const at = (u, v) => [x + u * w, y + v * h]; // a spot in the box, 0..1 across and down
+  c.beginPath();
+  switch (tool) {
+    case "line":
+      c.moveTo(ax, ay);
+      c.lineTo(bx, by);
+      break;
+    case "arrow": {
+      const angle = Math.atan2(by - ay, bx - ax);
+      c.moveTo(ax, ay);
+      c.lineTo(bx, by);
+      for (const side of [-1, 1]) {  // the two sides of the arrow head
+        c.moveTo(bx, by);
+        c.lineTo(bx - 26 * Math.cos(angle + side * 0.45), by - 26 * Math.sin(angle + side * 0.45));
+      }
+      break;
+    }
+    case "rect":
+      c.roundRect(x, y, w, h, Math.min(10, w / 4, h / 4));
+      break;
+    case "ellipse":
+      c.ellipse(cx, cy, w / 2, h / 2, 0, 0, Math.PI * 2);
+      break;
+    case "diamond":
+      c.moveTo(cx, y); c.lineTo(x + w, cy); c.lineTo(cx, y + h); c.lineTo(x, cy);
+      c.closePath();
+      break;
+    case "triangle":
+      c.moveTo(cx, y); c.lineTo(x + w, y + h); c.lineTo(x, y + h);
+      c.closePath();
+      break;
+    case "cloud":
+      // Four bumps on top and a flat bottom: the usual "internet" cloud.
+      c.moveTo(...at(0.25, 0.9));
+      c.bezierCurveTo(...at(0.06, 0.9), ...at(0, 0.62), ...at(0.17, 0.54));
+      c.bezierCurveTo(...at(0.1, 0.28), ...at(0.36, 0.16), ...at(0.48, 0.3));
+      c.bezierCurveTo(...at(0.56, 0.06), ...at(0.88, 0.1), ...at(0.85, 0.4));
+      c.bezierCurveTo(...at(1.02, 0.45), ...at(1, 0.9), ...at(0.78, 0.9));
+      c.closePath();
+      break;
+    case "cylinder": {
+      // A database or server: an oval top, straight sides, a curved bottom.
+      const ry = Math.min(h * 0.15, w * 0.3);
+      c.ellipse(cx, y + ry, w / 2, ry, 0, 0, Math.PI * 2);
+      c.moveTo(x, y + ry);
+      c.lineTo(x, y + h - ry);
+      c.ellipse(cx, y + h - ry, w / 2, ry, 0, Math.PI, 0, true);
+      c.lineTo(x + w, y + ry);
+      break;
+    }
+  }
+  c.stroke();
+}
+
+// Holding Shift: shapes become perfect squares or circles, and lines snap to
+// every 45 degrees. Returns the (possibly adjusted) end point.
+function constrain(x0, y0, p, shift, tool) {
+  if (!shift) return [p.x, p.y];
+  const dx = p.x - x0, dy = p.y - y0;
+  let x, y;
+  if (tool === "line" || tool === "arrow") {
+    const angle = Math.round(Math.atan2(dy, dx) / (Math.PI / 4)) * (Math.PI / 4);
+    const length = Math.hypot(dx, dy);
+    x = x0 + Math.cos(angle) * length;
+    y = y0 + Math.sin(angle) * length;
+  } else {
+    const size = Math.max(Math.abs(dx), Math.abs(dy));
+    x = x0 + Math.sign(dx || 1) * size;
+    y = y0 + Math.sign(dy || 1) * size;
+  }
+  return [Math.round(Math.min(Math.max(x, 0), W)), Math.round(Math.min(Math.max(y, 0), H))];
 }
 
 // Other people's pointers, with their names, drawn in screen pixels so they
@@ -340,13 +421,20 @@ canvas.addEventListener("pointerdown", (e) => {
   const p = toBoard(e);
   if (!p.inside) return;
   e.preventDefault();
+  // Clicking the board while a label is being typed keeps that label. (The
+  // preventDefault above stops the text box losing focus by itself.)
+  commitText();
   if (board.tool === "text") { showTextBox(p); return; }
   canvas.setPointerCapture(e.pointerId);
   if (board.tool === "eraser") { eraseAt(p); return; }
 
-  board.mine = { sid: Date.now().toString(36) + (strokeCount++), tool: board.tool, color: board.color, points: [p.x, p.y] };
-  board.pending = [p.x, p.y];
-  if (board.tool === "pen") sendTimer = setInterval(() => sendBatch(false), SEND_EVERY);
+  const shape = SHAPES.has(board.tool);
+  // A shape starts as two points in the same spot; dragging moves the second.
+  board.mine = { sid: Date.now().toString(36) + (strokeCount++), tool: board.tool, color: board.color,
+                 points: shape ? [p.x, p.y, p.x, p.y] : [p.x, p.y] };
+  board.pending = shape ? [] : [p.x, p.y];
+  board.changed = false;
+  sendTimer = setInterval(() => sendBatch(false), SEND_EVERY);
   queueDraw();
 });
 
@@ -357,8 +445,10 @@ canvas.addEventListener("pointermove", (e) => {
   if (board.tool === "eraser" && e.buttons) { eraseAt(p); return; }
   const m = board.mine;
   if (!m) return;
-  if (m.tool === "arrow") {
-    m.points = [m.points[0], m.points[1], p.x, p.y]; // just the two ends
+  if (SHAPES.has(m.tool)) {
+    const [x, y] = constrain(m.points[0], m.points[1], p, e.shiftKey, m.tool);
+    m.points = [m.points[0], m.points[1], x, y]; // just the two points
+    board.changed = true;
   } else {
     // Skip points too close to the last one: the line looks the same, with fewer messages.
     const lx = m.points[m.points.length - 2], ly = m.points[m.points.length - 1];
@@ -376,9 +466,15 @@ function finishMyStroke() {
   const m = board.mine;
   if (!m) return;
   clearInterval(sendTimer);
-  if (m.tool === "arrow") {
-    if (m.points.length < 4) { cancelMyStroke(); return; } // a click, not an arrow
-    board.pending = m.points;
+  const [x0, y0, x1, y1] = m.points;
+  if (SHAPES.has(m.tool) && Math.hypot(x1 - x0, y1 - y0) < 4) {
+    // A click, not a shape. Others may already see a tiny live shape, so tell
+    // the server it's finished but empty: it saves nothing and everyone drops it.
+    m.points = [x0, y0, x0, y0];
+    sendBatch(true);
+    board.mine = null;
+    queueDraw();
+    return;
   }
   sendBatch(true);
   // Keep showing it until the server sends back the saved copy.
@@ -394,9 +490,17 @@ function cancelMyStroke() {
 }
 
 // Send the points drawn since the last batch (and "done" at the end).
+// A shape is sent whole each time, and only if it changed.
 function sendBatch(done) {
   const m = board.mine;
-  if (!m || (!done && board.pending.length === 0)) return;
+  if (!m) return;
+  if (SHAPES.has(m.tool)) {
+    if (!done && !board.changed) return;
+    sendJSON({ type: "board_draw", sid: m.sid, tool: m.tool, color: m.color, points: m.points, done });
+    board.changed = false;
+    return;
+  }
+  if (!done && board.pending.length === 0) return;
   sendJSON({ type: "board_draw", sid: m.sid, tool: m.tool, color: m.color, points: board.pending, done });
   board.pending = [];
 }
@@ -425,12 +529,41 @@ function touches(s, p) {
     const width = s.text.length * TEXT_SIZE * 0.58;
     return p.x >= pts[0] - 6 && p.x <= pts[0] + width && Math.abs(p.y - pts[1]) <= TEXT_SIZE * 0.6;
   }
-  const line = s.tool === "arrow" ? [pts[0], pts[1], pts[pts.length - 2], pts[pts.length - 1]] : pts;
+  const line = SHAPES.has(s.tool) ? outline(s.tool, pts[0], pts[1], pts[pts.length - 2], pts[pts.length - 1]) : pts;
   if (line.length === 2) return Math.hypot(p.x - line[0], p.y - line[1]) <= ERASE_DISTANCE;
   for (let i = 0; i + 3 < line.length; i += 2) {
     if (distanceToSegment(p, line[i], line[i + 1], line[i + 2], line[i + 3]) <= ERASE_DISTANCE) return true;
   }
   return false;
+}
+
+// A shape's edge as a list of points, so the eraser can tell when it touches
+// the edge. (Rubbing inside a big box doesn't erase it, only its edge does.)
+function outline(tool, ax, ay, bx, by) {
+  const x = Math.min(ax, bx), y = Math.min(ay, by);
+  const w = Math.abs(bx - ax), h = Math.abs(by - ay);
+  const cx = x + w / 2, cy = y + h / 2;
+  switch (tool) {
+    case "line":
+    case "arrow":
+      return [ax, ay, bx, by];
+    case "diamond":
+      return [cx, y, x + w, cy, cx, y + h, x, cy, cx, y];
+    case "triangle":
+      return [cx, y, x + w, y + h, x, y + h, cx, y];
+    case "ellipse":
+    case "cloud": {
+      // Near enough for a cloud too: points around an oval.
+      const points = [];
+      for (let i = 0; i <= 32; i++) {
+        const a = (i / 32) * Math.PI * 2;
+        points.push(cx + (w / 2) * Math.cos(a), cy + (h / 2) * Math.sin(a));
+      }
+      return points;
+    }
+    default: // rect, cylinder
+      return [x, y, x + w, y, x + w, y + h, x, y + h, x, y];
+  }
 }
 
 function distanceToSegment(p, x1, y1, x2, y2) {
@@ -442,9 +575,11 @@ function distanceToSegment(p, x1, y1, x2, y2) {
 // --- Text labels ---
 
 let textBox = null;
+let textPoint = null;  // where on the board the open text box is
 
 function showTextBox(p) {
-  removeTextBox();
+  commitText(); // a label still being typed is kept, not thrown away
+  textPoint = p;
   const v = board.view;
   textBox = document.createElement("input");
   textBox.className = "board-text";
@@ -454,17 +589,19 @@ function showTextBox(p) {
   textBox.style.top = v.y + p.y * v.scale - 16 + "px";
   textBox.style.color = COLORS[board.color];
   textBox.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") commitText(p);
+    if (e.key === "Enter") commitText();
     else if (e.key === "Escape") removeTextBox();
   });
-  textBox.addEventListener("blur", () => commitText(p));
+  textBox.addEventListener("blur", () => commitText());
   wrap.appendChild(textBox);
   textBox.focus();
 }
 
-function commitText(p) {
+// Save the label being typed (if any) as a text stroke.
+function commitText() {
   if (!textBox) return;
   const text = textBox.value.trim();
+  const p = textPoint;
   removeTextBox();
   if (!text) return;
   const sid = Date.now().toString(36) + (strokeCount++);
@@ -482,16 +619,68 @@ function removeTextBox() {
 
 // --- The toolbar ---
 
-for (const btn of panel.querySelectorAll("[data-tool]")) {
-  btn.onclick = () => {
-    board.tool = btn.dataset.tool;
-    for (const b of panel.querySelectorAll("[data-tool]")) {
-      b.classList.toggle("active", b === btn);
-      b.setAttribute("aria-pressed", String(b === btn));
-    }
-    canvas.dataset.tool = board.tool; // the CSS picks a matching mouse pointer
+// Pick a tool: pen, text, eraser, or a shape (which lights up the Shapes button).
+function selectTool(tool) {
+  board.tool = tool;
+  for (const b of panel.querySelectorAll("[data-tool]")) {
+    const on = b.dataset.tool === tool || (b.dataset.tool === "shape" && SHAPES.has(tool));
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  }
+  canvas.dataset.tool = SHAPES.has(tool) ? "shape" : tool; // the CSS picks a matching mouse pointer
+}
+
+for (const btn of panel.querySelectorAll('[data-tool]:not([data-tool="shape"])')) {
+  btn.onclick = () => selectTool(btn.dataset.tool);
+}
+
+// The Shapes menu. The button shows the last shape picked.
+const shapeBtn = document.getElementById("shape-btn");
+const shapeMenu = document.getElementById("shape-menu");
+const shapeBtnIcon = document.getElementById("shape-btn-icon");
+
+function setShapeMenu(open) {
+  shapeMenu.classList.toggle("hidden", !open);
+  shapeBtn.setAttribute("aria-expanded", String(open));
+  if (open) shapeMenu.querySelector(`[data-shape="${board.shape}"]`)?.focus();
+}
+
+shapeBtn.onclick = (e) => {
+  e.stopPropagation();
+  setShapeMenu(shapeMenu.classList.contains("hidden"));
+};
+
+for (const item of shapeMenu.querySelectorAll("[data-shape]")) {
+  item.onclick = () => {
+    board.shape = item.dataset.shape;
+    shapeBtnIcon.replaceChildren(item.querySelector("svg").cloneNode(true));
+    const label = "Shapes: " + item.textContent.trim();
+    shapeBtn.title = label;
+    shapeBtn.setAttribute("aria-label", label);
+    for (const other of shapeMenu.querySelectorAll("[data-shape]")) other.classList.toggle("current", other === item);
+    selectTool(board.shape);
+    setShapeMenu(false);
   };
 }
+shapeMenu.querySelector(`[data-shape="${board.shape}"]`).classList.add("current");
+
+// Up and down arrows move through the menu; a click outside or Escape closes it.
+shapeMenu.addEventListener("keydown", (e) => {
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault();
+  const items = [...shapeMenu.querySelectorAll("[data-shape]")];
+  const i = items.indexOf(document.activeElement);
+  items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus();
+});
+document.addEventListener("click", (e) => {
+  if (!shapeMenu.contains(e.target)) setShapeMenu(false);
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !shapeMenu.classList.contains("hidden")) {
+    setShapeMenu(false);
+    shapeBtn.focus();
+  }
+});
 for (const btn of panel.querySelectorAll("[data-color]")) {
   btn.onclick = () => {
     board.color = btn.dataset.color;
