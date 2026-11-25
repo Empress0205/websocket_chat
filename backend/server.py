@@ -576,7 +576,8 @@ async def handle_board(ws, msg):
         # "tools" tells the page what this server can share, so a page newer
         # than the server can warn instead of silently drawing alone.
         await send(ws, {"type": "board_state", "key": page_key(me["id"], conv),
-                        "strokes": db.get_strokes(conv), "tools": list(board.TOOLS)})
+                        "strokes": db.get_strokes(conv), "tools": list(board.TOOLS),
+                        "size": [board.WIDTH, board.HEIGHT], "version": board.VERSION})
         await send_board_viewers(conv)
         return
 
@@ -614,8 +615,16 @@ async def handle_board(ws, msg):
         points = board.clean_points(msg.get("points"))
         if points is None:
             return
-        replace = stroke["tool"] in board.SHAPES
-        if replace:
+        replace = stroke["tool"] in board.SHAPES or stroke["tool"] == "text"
+        if stroke["tool"] == "text":
+            # A label is sent while it's typed: each message is its words so
+            # far, at its one point, so others watch it being written.
+            stroke["text"] = board.clean_text(msg.get("text"))
+            if len(points) == 2:
+                stroke["points"] = points
+            else:
+                points = stroke["points"]
+        elif replace:
             # A shape is always its two points: each batch is the whole shape
             # as it is now, so others see it stretch while it's dragged.
             if len(points) == 4:
