@@ -450,19 +450,62 @@ body {
 #board-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
 #board-btn:disabled { opacity: 0.5; cursor: default; }
 
-/* With the side panel open, the window grows so the chat keeps its width */
-.app.with-panel { max-width: 1320px; }
+/* With the side panel open, the window grows so the chat keeps its width.
+   --panel-w is the panel's width, set by dragging its edge (board.js). */
+.app.with-panel { max-width: min(96vw, calc(860px + var(--panel-w, 460px))); }
 .chat { min-width: 0; }
 
 /* The side panel (Option A in the layout design): tools open here, beside the chat */
 .side-panel {
-  width: 460px;
+  position: relative;
+  width: var(--panel-w, 460px);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   border-left: 1px solid #e6e9ee;
   background: #fff;
 }
+
+/* The draggable left edge of the panel */
+.panel-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  width: 8px;
+  z-index: 4;
+  cursor: col-resize;
+}
+.panel-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 2px;
+  background: transparent;
+  transition: background 0.15s;
+}
+.panel-resize:hover::after, .panel-resize:focus-visible::after, .app.resizing .panel-resize::after { background: #3b82f6; }
+.panel-resize:focus-visible { outline: none; }
+.app.resizing, .app.resizing * { cursor: col-resize; user-select: none; }
+
+/* Expand button: shows "expand" normally and "shrink" when expanded */
+#board-expand .icon-shrink { display: none; }
+.app.board-expanded #board-expand .icon-expand { display: none; }
+.app.board-expanded #board-expand .icon-shrink { display: block; }
+
+/* Expanded (Option B): the board fills the main space and the chat docks on
+   the right. The sidebar hides; the rooms are a click away again when you shrink it. */
+.app.board-expanded { max-width: 96vw; height: 94vh; max-height: none; }
+.app.board-expanded .sidebar { display: none; }
+.app.board-expanded .side-panel { order: 1; flex: 1; width: auto; border-left: none; border-right: 1px solid #e6e9ee; }
+.app.board-expanded .chat { order: 2; flex: 0 0 340px; }
+.app.board-expanded .panel-resize { display: none; }
+.app.board-expanded .me,
+.app.board-expanded #board-btn,
+.app.board-expanded #poll-btn .btn-label { display: none; }
+.app.board-expanded #poll-btn { padding: 0 12px; }
 .panel-head {
   display: flex;
   align-items: center;
@@ -614,6 +657,49 @@ body {
 .panel-foot span { flex: 1; }
 .panel-foot span.problem { color: #b91c1c; font-weight: 600; }
 
+/* "admin is drawing on the board · Open the board" */
+.board-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 12px 8px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 12px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 0.85rem;
+}
+.board-banner > svg { width: 16px; height: 16px; color: #3b82f6; flex-shrink: 0; }
+.board-banner span { flex: 1; min-width: 0; }
+#board-banner-open {
+  height: 32px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 8px;
+  background: #3b82f6;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#board-banner-open:hover { background: #2563eb; }
+.banner-close {
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: #1e3a8a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.banner-close svg { width: 14px; height: 14px; }
+.banner-close:hover { background: #dbeafe; }
+
 /* A board snapshot in the chat */
 .snapshot { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .snapshot-picture { border: 1px solid #e6e9ee; border-radius: 8px; background: #fff; }
@@ -621,6 +707,7 @@ body {
 /* Medium screens: the panel covers the chat instead of squeezing it */
 @media (max-width: 900px) {
   .side-panel { position: fixed; inset: 0; width: auto; z-index: 8; border-left: none; }
+  .panel-resize, #board-expand { display: none; }  /* it already fills the screen */
 }
 
 /* Small screens: put the sidebar above the chat */
