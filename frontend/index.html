@@ -31,6 +31,13 @@
       <div id="typing"></div>
 
       <div class="composer">
+        <button id="poll-btn" title="Create a poll" disabled>
+          <!-- A small bar chart, drawn like the padlock on private rooms -->
+          <svg class="poll-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M3 13.5V9M8 13.5V3M13 13.5V6.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          </svg>
+          Poll
+        </button>
         <input id="text" placeholder="Type a message…" autocomplete="off">
         <button id="send" disabled>Send</button>
       </div>
@@ -61,6 +68,27 @@
       <p id="admin-msg" class="info hidden"></p>
       <div id="admin-rooms"></div>
     </div>
+  </div>
+
+  <!-- New poll form, opened with the "Poll" button -->
+  <div id="poll-dialog" class="hidden">
+    <form class="admin-card" id="poll-form">
+      <div class="admin-head">
+        <h2>New poll</h2>
+        <button type="button" class="dialog-close" id="poll-close" title="Close">&times;</button>
+      </div>
+      <label class="field-label" for="poll-question">Question</label>
+      <input id="poll-question" class="field" placeholder="e.g. Where should we have lunch?" maxlength="200" autocomplete="off">
+      <span class="field-label">Options</span>
+      <div id="poll-options"></div>
+      <button type="button" id="poll-add" class="link-button">+ Add option</button>
+      <p id="poll-error" class="info error hidden"></p>
+      <div class="dialog-actions">
+        <span class="muted" id="poll-where"></span>
+        <button type="button" id="poll-cancel" class="secondary">Cancel</button>
+        <button id="poll-create" class="primary">Create poll</button>
+      </div>
+    </form>
   </div>
 
   <!-- Phase 4: nothing works until you log in -->
