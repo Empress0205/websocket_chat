@@ -9,6 +9,10 @@ points or draw off the board by sending messages by hand.
 """
 WIDTH = 2000
 HEIGHT = 1250
+# Goes up when the board changes in a way an older page or server can't
+# handle (2: text labels are sent live while they're typed). The page checks
+# it, with the size, to warn when the server needs restarting.
+VERSION = 2
 
 COLORS = ("black", "blue", "red", "green")
 # Shapes are drawn between two points: where the drag started and where it is
@@ -31,13 +35,14 @@ def start_stroke(tool, color, text):
         return None, "Unknown drawing tool."
     if color not in COLORS:
         return None, "Unknown colour."
-    if tool == "text":
-        text = str(text or "").strip()[:MAX_TEXT]
-        if not text:
-            return None, "Write something first."
-    else:
-        text = None
+    # A text label is sent while it's typed, so it may be empty for a moment.
+    text = clean_text(text) if tool == "text" else None
     return {"tool": tool, "color": color, "text": text, "points": []}, None
+
+
+def clean_text(text):
+    """A label's words: trimmed, and no longer than MAX_TEXT."""
+    return str(text or "").strip()[:MAX_TEXT]
 
 
 def clean_points(points):
@@ -58,12 +63,14 @@ def clean_points(points):
 
 def is_complete(stroke):
     """
-    A pen line or text label needs one point. A shape needs its two points,
-    and they mustn't be the same spot (a click isn't a shape).
+    A pen line needs one point; a text label one point and some words. A shape
+    needs its two points, and they mustn't be the same spot (a click isn't a shape).
     """
     points = stroke["points"]
     if stroke["tool"] in SHAPES:
         return len(points) == 4 and (points[0], points[1]) != (points[2], points[3])
+    if stroke["tool"] == "text":
+        return len(points) >= 2 and bool(stroke["text"])
     return len(points) >= 2
 
 
