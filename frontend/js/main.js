@@ -10,6 +10,7 @@
 //   typing.js         "... is typing"
 //   composer.js       the message box and Send button
 //   polls.js          poll cards, voting and the /poll command
+//   board.js          the shared drawing board in the side panel
 
 import { connect } from "./connection.js";
 
