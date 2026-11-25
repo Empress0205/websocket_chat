@@ -431,6 +431,157 @@ body {
 }
 .poll-close:hover { background: #f3f5f8; }
 
+/* Board button: same pill as Poll; solid blue while the board is open */
+#board-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#board-btn:hover { background: #dbeafe; }
+#board-btn.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+#board-btn:disabled { opacity: 0.5; cursor: default; }
+
+/* With the side panel open, the window grows so the chat keeps its width */
+.app.with-panel { max-width: 1320px; }
+.chat { min-width: 0; }
+
+/* The side panel (Option A in the layout design): tools open here, beside the chat */
+.side-panel {
+  width: 460px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid #e6e9ee;
+  background: #fff;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid #e6e9ee;
+}
+.panel-head h2 { margin: 0; font-size: 1rem; flex: 1; }
+.panel-icon { width: 17px; height: 17px; color: #3b82f6; }
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #374151;
+  cursor: pointer;
+}
+.icon-btn svg { width: 16px; height: 16px; }
+.icon-btn:hover { background: #f3f5f8; }
+.icon-btn.active { background: #dbeafe; color: #1d4ed8; }
+.panel-head .icon-btn { border-color: #e6e9ee; }
+.text-btn {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #e6e9ee;
+  border-radius: 8px;
+  background: #fff;
+  font-size: 0.8rem;
+  color: #374151;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.text-btn:hover { background: #f3f5f8; }
+
+/* Who has the board open */
+.viewers { display: flex; align-items: center; }
+.viewer {
+  width: 26px;
+  height: 26px;
+  margin-left: -7px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.viewer:first-child { margin-left: 0; }
+.viewer-count { margin-left: 8px; font-size: 0.8rem; color: #6b7280; white-space: nowrap; }
+
+/* Toolbar: tools, colours, undo and clear */
+.board-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #e6e9ee;
+}
+.tool-sep { width: 1px; height: 22px; background: #e6e9ee; margin: 0 6px; }
+.tool-gap { flex: 1; }
+.swatch {
+  width: 24px;
+  height: 24px;
+  margin: 0 2px;
+  border: 2px solid #fff;
+  border-radius: 50%;
+  outline: 1px solid #e6e9ee;
+  cursor: pointer;
+}
+.swatch.active { outline: 2px solid #3b82f6; }
+.swatch[data-color="black"] { background: #111827; }
+.swatch[data-color="blue"]  { background: #2563eb; }
+.swatch[data-color="red"]   { background: #dc2626; }
+.swatch[data-color="green"] { background: #16a34a; }
+
+/* The canvas fills the space; the page draws a white board inside it */
+.board-wrap { flex: 1; min-height: 0; position: relative; background: #eef1f5; }
+#board-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
+#board-canvas[data-tool="text"] { cursor: text; }
+#board-canvas[data-tool="eraser"] { cursor: cell; }
+.board-text {
+  position: absolute;
+  min-width: 140px;
+  padding: 4px 6px;
+  border: 1px dashed #93c5fd;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.95);
+  font: 600 0.9rem system-ui, sans-serif;
+  outline: none;
+}
+.panel-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid #e6e9ee;
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+.panel-foot span { flex: 1; }
+.panel-foot span.problem { color: #b91c1c; font-weight: 600; }
+
+/* A board snapshot in the chat */
+.snapshot { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
+.snapshot-picture { border: 1px solid #e6e9ee; border-radius: 8px; background: #fff; }
+
+/* Medium screens: the panel covers the chat instead of squeezing it */
+@media (max-width: 900px) {
+  .side-panel { position: fixed; inset: 0; width: auto; z-index: 8; border-left: none; }
+}
+
 /* Small screens: put the sidebar above the chat */
 @media (max-width: 640px) {
   .app { flex-direction: column; height: 100vh; max-height: none; border-radius: 0; }
