@@ -110,9 +110,35 @@ def init_db(path=DB_PATH):
             PRIMARY KEY (poll_id, user_id)
         )
     """)
+    # Drawing board: every finished line, arrow or text, per conversation.
+    # Points are stored as JSON: [x1, y1, x2, y2, ...] on a 1000 x 1250 board.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS board_strokes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            conv       TEXT NOT NULL,
+            user_id    INTEGER NOT NULL REFERENCES users (id),
+            tool       TEXT NOT NULL,
+            color      TEXT NOT NULL,
+            points     TEXT NOT NULL,
+            text       TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+    _conn.execute("CREATE INDEX IF NOT EXISTS idx_board_conv ON board_strokes (conv, id)")
+    # A snapshot is a frozen copy of a board, posted into the chat as a message.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS board_snapshots (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            conv       TEXT NOT NULL,
+            strokes    TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+    """)
     columns = [row["name"] for row in _conn.execute("PRAGMA table_info(messages)")]
     if "poll_id" not in columns:
         _conn.execute("ALTER TABLE messages ADD COLUMN poll_id INTEGER REFERENCES polls (id)")
+    if "snapshot_id" not in columns:
+        _conn.execute("ALTER TABLE messages ADD COLUMN snapshot_id INTEGER REFERENCES board_snapshots (id)")
 
     # Everyone shares #general.
     _conn.execute("INSERT OR IGNORE INTO rooms (name, is_public, created_at) VALUES ('general', 1, ?)",
@@ -320,18 +346,19 @@ def unread_counts(user_id, rooms):
     return counts
 
 
-def save_message(room, sender_id, sender_name, text, poll_id=None):
+def save_message(room, sender_id, sender_name, text, poll_id=None, snapshot_id=None):
     """Store one chat message and return it as the server will send it."""
     sent_at = _now().isoformat(timespec="seconds")
     # The ? placeholders let SQLite insert the values safely. Building the SQL
     # with f-strings would let a message like  '); DROP TABLE messages; --
     # run as SQL (an "SQL injection" attack).
     cur = _conn.execute(
-        "INSERT INTO messages (room, sender_id, sender_name, text, sent_at, poll_id) VALUES (?, ?, ?, ?, ?, ?)",
-        (room, sender_id, sender_name, text, sent_at, poll_id),
+        "INSERT INTO messages (room, sender_id, sender_name, text, sent_at, poll_id, snapshot_id) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (room, sender_id, sender_name, text, sent_at, poll_id, snapshot_id),
     )
     _conn.commit()
-    return _to_message(cur.lastrowid, room, sender_id, sender_name, text, sent_at, poll_id)
+    return _to_message(cur.lastrowid, room, sender_id, sender_name, text, sent_at, poll_id, snapshot_id)
 
 
 def get_history(room, before_id=None, limit=HISTORY_LIMIT):
@@ -351,19 +378,87 @@ def get_history(room, before_id=None, limit=HISTORY_LIMIT):
     rows = rows[:limit]
     rows.reverse()  # we fetched newest first; the page wants oldest first
     messages = [
-        _to_message(r["id"], r["room"], r["sender_id"], r["sender_name"], r["text"], r["sent_at"], r["poll_id"])
+        _to_message(r["id"], r["room"], r["sender_id"], r["sender_name"], r["text"], r["sent_at"],
+                    r["poll_id"], r["snapshot_id"])
         for r in rows
     ]
     return messages, more
 
 
-def _to_message(msg_id, room, sender_id, sender_name, text, sent_at, poll_id=None):
+def _to_message(msg_id, room, sender_id, sender_name, text, sent_at, poll_id=None, snapshot_id=None):
     """The same shape as a live "chat" message, so the page treats both alike."""
     msg = {"type": "chat", "msg_id": msg_id, "room": room, "id": sender_id,
            "name": sender_name, "text": text, "sent_at": sent_at}
     if poll_id is not None:
         msg["poll"] = get_poll(poll_id)  # the page draws a poll card instead of text
+    if snapshot_id is not None:
+        msg["board"] = get_snapshot(snapshot_id)  # the page draws the board picture
     return msg
+
+
+# --- Drawing board ---
+
+def _to_stroke(row):
+    return {"id": row["id"], "user_id": str(row["user_id"]), "tool": row["tool"],
+            "color": row["color"], "points": json.loads(row["points"]), "text": row["text"]}
+
+
+def add_stroke(conv, user_id, tool, color, points, text=None):
+    """Save one finished line, arrow or text, and return it."""
+    cur = _conn.execute(
+        "INSERT INTO board_strokes (conv, user_id, tool, color, points, text, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (conv, int(user_id), tool, color, json.dumps(points), text, _now().isoformat(timespec="seconds")),
+    )
+    _conn.commit()
+    return {"id": cur.lastrowid, "user_id": str(user_id), "tool": tool, "color": color,
+            "points": points, "text": text}
+
+
+def get_strokes(conv):
+    """Everything on a conversation's board, oldest first (the drawing order)."""
+    return [_to_stroke(r) for r in _conn.execute(
+        "SELECT * FROM board_strokes WHERE conv = ? ORDER BY id", (conv,))]
+
+
+def count_strokes(conv):
+    return _conn.execute("SELECT COUNT(*) AS n FROM board_strokes WHERE conv = ?", (conv,)).fetchone()["n"]
+
+
+def delete_stroke(conv, stroke_id):
+    """Rub out one stroke. Returns True if it was there."""
+    cur = _conn.execute("DELETE FROM board_strokes WHERE conv = ? AND id = ?", (conv, int(stroke_id)))
+    _conn.commit()
+    return cur.rowcount == 1
+
+
+def delete_last_stroke(conv, user_id):
+    """Undo: remove this person's newest stroke. Returns its id, or None."""
+    row = _conn.execute("SELECT id FROM board_strokes WHERE conv = ? AND user_id = ? ORDER BY id DESC LIMIT 1",
+                        (conv, int(user_id))).fetchone()
+    if row is None:
+        return None
+    delete_stroke(conv, row["id"])
+    return row["id"]
+
+
+def clear_board(conv):
+    _conn.execute("DELETE FROM board_strokes WHERE conv = ?", (conv,))
+    _conn.commit()
+
+
+def create_snapshot(conv, sender_id, sender_name):
+    """Freeze the board as it is now and post it into the conversation."""
+    strokes = get_strokes(conv)
+    cur = _conn.execute("INSERT INTO board_snapshots (conv, strokes, created_at) VALUES (?, ?, ?)",
+                        (conv, json.dumps(strokes), _now().isoformat(timespec="seconds")))
+    return save_message(conv, sender_id, sender_name, "Board snapshot", snapshot_id=cur.lastrowid)
+
+
+def get_snapshot(snapshot_id):
+    row = _conn.execute("SELECT * FROM board_snapshots WHERE id = ?", (int(snapshot_id),)).fetchone()
+    if row is None:
+        return None
+    return {"id": row["id"], "strokes": json.loads(row["strokes"])}
 
 
 # --- Polls ---
