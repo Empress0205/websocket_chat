@@ -11,6 +11,7 @@
 //   composer.js       the message box and Send button
 //   polls.js          poll cards, voting and the /poll command
 //   board.js          the shared drawing board in the side panel
+//   voice.js          voice huddles on the board (WebRTC)
 
 import { connect } from "./connection.js";
 
