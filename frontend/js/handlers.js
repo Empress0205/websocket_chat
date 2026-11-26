@@ -15,6 +15,7 @@ import { showTyping, clearTyping } from "./typing.js";
 import { renderAdmin, adminMessage, isAdminOpen, setAdminButton } from "./admin.js";
 import { updatePoll } from "./polls.js";
 import { handleBoardMessage, boardReconnected, showBoardActivity } from "./board.js";
+import { handleVoiceMessage } from "./voice.js";
 
 export function handleMessage(msg) {
   switch (msg.type) {
@@ -73,6 +74,17 @@ export function handleMessage(msg) {
     case "board_activity":
       // Someone is drawing on this conversation's board and ours is closed.
       return showBoardActivity(msg);
+
+    case "voice_joined":
+    case "voice_refused":
+    case "voice_ended":
+    case "voice_roster":
+    case "voice_offer":
+    case "voice_answer":
+    case "voice_ice":
+    case "voice_left":
+      // Voice huddles: who's talking, and the WebRTC handshake (see voice.js).
+      return handleVoiceMessage(msg);
 
     case "poll_update":
       // Someone voted or the poll was closed: redraw it with the new totals.
