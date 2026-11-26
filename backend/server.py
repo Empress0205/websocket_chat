@@ -1,6 +1,7 @@
 """
 A WebSocket chat server with accounts, rooms, private messages, history,
-read receipts and messages that wait for people who are offline.
+read receipts, messages that wait for people who are offline, polls, a shared
+drawing board, and voice huddles (the server only does the WebRTC signalling).
 
 Run it with:   python server.py
 Then open index.html, log in with an account your admin created, and chat.
@@ -16,6 +17,7 @@ import auth  # our own file: passwords and login tokens (auth.py)
 import db  # our own file: saves and loads data (db.py)
 import polls  # our own file: the rules for polls (polls.py)
 import board  # our own file: the rules for the drawing board (board.py)
+import voice  # our own file: who is in which voice huddle (voice.py)
 from ratelimit import RateLimiter, RateLimiterGroup  # our own file (ratelimit.py)
 
 DEFAULT_ROOM = "general"
@@ -53,6 +55,9 @@ def new_client():
         "board": None,         # the conversation whose board is open, if any
         "drawing": {},         # strokes being drawn right now, by the page's stroke id
         "announced": {},       # when we last said "<name> is drawing", per board
+        "voice": None,         # the conversation whose huddle they're talking in, if any
+        # Setting up a call sends a burst of ICE candidates, so a roomy limit.
+        "voice_limit": RateLimiter(capacity=200, per_second=50),
     }
 
 
@@ -280,10 +285,14 @@ async def handle_admin(ws, msg):
                 await send_rooms(target)
                 if kind == "admin_add_member":
                     await send(target, {"type": "notice", "text": f"You were given access to #{name}."})
-                elif clients[target]["room"] == name and not db.can_access(user_id, name):
-                    # They were inside the room: move them out.
-                    await send(target, {"type": "error", "text": f"You no longer have access to #{name}."})
-                    await join_room(target, DEFAULT_ROOM)
+                elif not db.can_access(user_id, name):
+                    if clients[target]["voice"] == name:
+                        await leave_voice(target)  # they were talking in that room's huddle
+                        await send(target, {"type": "voice_ended", "text": f"You no longer have access to #{name}, so you left its huddle."})
+                    if clients[target]["room"] == name:
+                        # They were inside the room: move them out.
+                        await send(target, {"type": "error", "text": f"You no longer have access to #{name}."})
+                        await join_room(target, DEFAULT_ROOM)
             await send_user_list()  # who can see which room names has changed
 
     elif kind != "admin_list":
@@ -305,6 +314,8 @@ async def join_room(ws, room):
     await send(ws, {"type": "joined", "room": room})
     # Send the room's recent messages before anything new arrives.
     await send_history(ws, room=room)
+    if old is None:
+        await send_voice_rosters(ws)  # just logged in: which huddles are going on
     if old == room:
         return
     if old is not None:
@@ -370,6 +381,9 @@ async def handle_message(ws, msg):
 
     elif msg_type.startswith("board_"):
         await handle_board(ws, msg)
+
+    elif msg_type.startswith("voice_"):
+        await handle_voice(ws, msg)
 
     elif msg_type == "chat":
         text = str(msg.get("text") or "").strip()[:MAX_TEXT]
@@ -502,6 +516,14 @@ async def handle_poll(ws, msg):
     await send_to_conv(poll["conv"], {"type": "poll_update", "poll": db.get_poll(poll["id"])})
 
 
+def conversation_from(me, msg):
+    """Which conversation a message is about: a room, or a private chat ("with" a person)."""
+    if msg.get("with"):
+        other = valid_user_id(msg.get("with"))
+        return db.dm_key(me["id"], other) if other and other != me["id"] and db.get_user(other) else None
+    return clean_room(msg.get("room"))
+
+
 # --- Drawing board ---
 # Each conversation (room or private chat) has one board. People who have it
 # open are its "viewers": everything drawn is passed to them as it happens.
@@ -562,12 +584,7 @@ async def handle_board(ws, msg):
     kind = msg.get("type")
 
     if kind == "board_open":
-        # Which conversation: a room, or a private chat ("with" a person).
-        if msg.get("with"):
-            other = valid_user_id(msg.get("with"))
-            conv = db.dm_key(me["id"], other) if other and other != me["id"] and db.get_user(other) else None
-        else:
-            conv = clean_room(msg.get("room"))
+        conv = conversation_from(me, msg)
         if conv is None or not polls.can_use(me["id"], conv):
             await send(ws, {"type": "error", "text": "You can't open that board."})
             return
@@ -685,8 +702,102 @@ async def handle_board(ws, msg):
         print("Ignored unknown message:", for_log(msg))
 
 
-# Messages that arrive many times a second: never print them (see the stress test).
-QUIET = ("ping", "board_draw", "board_cursor")
+# --- Voice huddles (WebRTC signalling) ---
+# The server never touches the audio. It keeps track of who is in each huddle,
+# and passes offers, answers and ICE candidates between two people in the same
+# huddle. See voice.py for how it fits together.
+
+async def send_voice_rosters(ws):
+    """Tell one person about every huddle going on that they could join."""
+    me = clients[ws]
+    for conv in list(voice.huddles):
+        if polls.can_use(me["id"], conv):
+            await send(ws, {"type": "voice_roster", "key": page_key(me["id"], conv),
+                            "people": voice.people(conv)})
+
+
+async def send_voice_roster(conv):
+    """Who is in a huddle now, to everyone who can see that conversation (for the "Join" banner)."""
+    people = voice.people(conv)
+    for ws, info in list(clients.items()):
+        if info["id"] is not None and info["room"] is not None and polls.can_use(info["id"], conv):
+            await send(ws, {"type": "voice_roster", "key": page_key(info["id"], conv), "people": people})
+
+
+async def leave_voice(ws, me=None):
+    """Take this connection out of its huddle, and tell the others to hang up on it."""
+    me = me or clients[ws]
+    conv, me["voice"] = me["voice"], None
+    if conv is None or not voice.leave(conv, me["id"], ws):
+        return
+    for person in voice.huddles.get(conv, {}).values():
+        await send(person["ws"], {"type": "voice_left", "id": me["id"]})
+    await send_voice_roster(conv)
+
+
+async def handle_voice(ws, msg):
+    me = clients[ws]
+    kind = msg.get("type")
+    if not me["voice_limit"].allow():
+        return  # far too fast: drop it quietly
+
+    if kind == "voice_join":
+        conv = conversation_from(me, msg)
+        if conv is None or not polls.can_use(me["id"], conv):
+            await send(ws, {"type": "voice_refused", "text": "You can't join that huddle."})
+            return
+        await leave_voice(ws)  # one huddle at a time (and joining again starts afresh)
+        error = voice.join(conv, me["id"], me["name"], ws)
+        if error:
+            await send(ws, {"type": "voice_refused", "text": error})
+            return
+        me["voice"] = conv
+        # The newcomer calls everyone already there, so two people never call
+        # each other at the same moment. The others just wait and answer.
+        peers = [p for p in voice.people(conv) if p["id"] != me["id"]]
+        await send(ws, {"type": "voice_joined", "key": page_key(me["id"], conv), "peers": peers,
+                        "ice_servers": voice.ICE_SERVERS, "max": voice.MAX_PEOPLE})
+        await send_voice_roster(conv)
+        return
+
+    conv = me["voice"]
+    if conv is None:
+        return  # not in a huddle: nothing to do
+
+    if kind == "voice_leave":
+        await leave_voice(ws)
+
+    elif kind == "voice_mute":
+        voice.set_muted(conv, me["id"], msg.get("muted") is True)
+        await send_voice_roster(conv)
+
+    elif kind in ("voice_offer", "voice_answer", "voice_ice"):
+        # Pass a note to one person, and only to someone in the same huddle,
+        # so the relay can't be used to send things to anyone else.
+        to = valid_user_id(msg.get("to"))
+        if not to or to == me["id"] or not voice.is_in(conv, to):
+            return
+        target = voice.huddles[conv][to]["ws"]
+        if kind == "voice_ice":
+            note = voice.clean_candidate(msg.get("candidate"))
+            field = "candidate"
+        else:
+            note = voice.clean_description(msg.get("sdp"), kind[6:])  # "offer" or "answer"
+            field = "sdp"
+        if note is None:
+            print(f"Ignored bad {kind} from {me['name']}")
+            return
+        # "from" is filled in here, never taken from the page, so nobody can
+        # pretend to be someone else in the handshake.
+        await send(target, {"type": kind, "from": me["id"], "name": me["name"], field: note})
+
+    else:
+        print("Ignored unknown message:", for_log(msg))
+
+
+# Messages that arrive many times a second, or are large and unreadable (an
+# offer is ~3,000 characters of SDP): never print them (see the stress test).
+QUIET = ("ping", "board_draw", "board_cursor", "voice_offer", "voice_answer", "voice_ice")
 
 
 async def handler(ws):
@@ -712,6 +823,7 @@ async def handler(ws):
     finally:
         me = clients.pop(ws)
         print(f"Client disconnected ({len(clients)} online)")
+        await leave_voice(ws, me)  # a dropped connection leaves its huddle
         if me["board"]:
             await send_board_viewers(me["board"])  # they're no longer on that board
         # If they just moved to another tab, they haven't really left.
