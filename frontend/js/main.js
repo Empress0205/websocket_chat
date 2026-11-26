@@ -12,6 +12,7 @@
 //   polls.js          poll cards, voting and the /poll command
 //   board.js          the shared drawing board in the side panel
 //   voice.js          voice huddles on the board (WebRTC)
+//   notify.js         "(3)" in the tab title, and the bell: sound and pop-ups
 
 import { connect } from "./connection.js";
 
