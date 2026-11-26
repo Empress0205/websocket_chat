@@ -144,6 +144,20 @@ def init_db(path=DB_PATH):
     # "This message was deleted".
     if "deleted" not in columns:
         _conn.execute("ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
+    # When a message's text was last changed (empty if it never was), for "(edited)".
+    if "edited_at" not in columns:
+        _conn.execute("ALTER TABLE messages ADD COLUMN edited_at TEXT")
+
+    # Reactions: one row per person per emoji per message. The primary key
+    # makes "alice reacted 👍 twice" impossible, like one vote per poll.
+    _conn.execute("""
+        CREATE TABLE IF NOT EXISTS reactions (
+            msg_id  INTEGER NOT NULL REFERENCES messages (id),
+            user_id INTEGER NOT NULL REFERENCES users (id),
+            emoji   TEXT NOT NULL,
+            PRIMARY KEY (msg_id, user_id, emoji)
+        )
+    """)
 
     # Everyone shares #general.
     _conn.execute("INSERT OR IGNORE INTO rooms (name, is_public, created_at) VALUES ('general', 1, ?)",
@@ -382,21 +396,27 @@ def get_history(room, before_id=None, limit=HISTORY_LIMIT):
     more = len(rows) > limit
     rows = rows[:limit]
     rows.reverse()  # we fetched newest first; the page wants oldest first
+    reactions = reactions_for([r["id"] for r in rows])  # one query for the whole batch
     messages = [
         _to_message(r["id"], r["room"], r["sender_id"], r["sender_name"], r["text"], r["sent_at"],
-                    r["poll_id"], r["snapshot_id"], r["deleted"])
+                    r["poll_id"], r["snapshot_id"], r["deleted"], r["edited_at"], reactions.get(r["id"]))
         for r in rows
     ]
     return messages, more
 
 
-def _to_message(msg_id, room, sender_id, sender_name, text, sent_at, poll_id=None, snapshot_id=None, deleted=0):
+def _to_message(msg_id, room, sender_id, sender_name, text, sent_at, poll_id=None, snapshot_id=None,
+                deleted=0, edited_at=None, reactions=None):
     """The same shape as a live "chat" message, so the page treats both alike."""
     msg = {"type": "chat", "msg_id": msg_id, "room": room, "id": sender_id,
            "name": sender_name, "text": text, "sent_at": sent_at}
     if deleted:
         msg["deleted"] = True  # the page shows "This message was deleted"
         return msg
+    if edited_at:
+        msg["edited"] = True  # the page adds "(edited)"
+    if reactions:
+        msg["reactions"] = reactions
     if poll_id is not None:
         msg["poll"] = get_poll(poll_id)  # the page draws a poll card instead of text
     if snapshot_id is not None:
@@ -425,7 +445,47 @@ def delete_message(msg_id):
         _conn.execute("DELETE FROM polls WHERE id = ?", (row["poll_id"],))
     if row["snapshot_id"] is not None:
         _conn.execute("DELETE FROM board_snapshots WHERE id = ?", (row["snapshot_id"],))
+    _conn.execute("DELETE FROM reactions WHERE msg_id = ?", (row["id"],))
     _conn.commit()
+
+
+def edit_message(msg_id, text):
+    """Change a message's text, and note when (for "(edited)")."""
+    _conn.execute("UPDATE messages SET text = ?, edited_at = ? WHERE id = ?",
+                  (text, _now().isoformat(timespec="seconds"), int(msg_id)))
+    _conn.commit()
+
+
+# --- Reactions ---
+
+def toggle_reaction(msg_id, user_id, emoji):
+    """Add this person's reaction, or take it back if they'd already added it."""
+    key = (int(msg_id), int(user_id), emoji)
+    cur = _conn.execute("DELETE FROM reactions WHERE msg_id = ? AND user_id = ? AND emoji = ?", key)
+    if cur.rowcount == 0:
+        _conn.execute("INSERT INTO reactions (msg_id, user_id, emoji) VALUES (?, ?, ?)", key)
+    _conn.commit()
+
+
+def reactions_for(msg_ids):
+    """
+    The reactions on some messages: {msg_id: [{"emoji": "👍", "users": [{id, name}]}]}.
+    Emoji are in the order they were first added to each message, like most chat apps.
+    """
+    if not msg_ids:
+        return {}
+    marks = ",".join("?" * len(msg_ids))  # one ? per id: still safe from SQL injection
+    result = {}
+    for r in _conn.execute(
+            f"SELECT r.msg_id, r.emoji, r.user_id, u.username FROM reactions r JOIN users u ON u.id = r.user_id "
+            f"WHERE r.msg_id IN ({marks}) ORDER BY r.rowid", [int(i) for i in msg_ids]):
+        groups = result.setdefault(r["msg_id"], [])
+        group = next((g for g in groups if g["emoji"] == r["emoji"]), None)
+        if group is None:
+            group = {"emoji": r["emoji"], "users": []}
+            groups.append(group)
+        group["users"].append({"id": str(r["user_id"]), "name": r["username"]})
+    return result
 
 
 # --- Drawing board ---
