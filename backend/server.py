@@ -362,7 +362,7 @@ async def handle_message(ws, msg):
         # Everything below needs the client to have joined a room first.
         print("Ignored message before join:", for_log(msg))
 
-    elif msg_type in ("chat", "dm", "poll_create", "poll_vote", "board_snapshot") and not me["message_limit"].allow():
+    elif msg_type in ("chat", "dm", "poll_create", "poll_vote", "board_snapshot", "delete") and not me["message_limit"].allow():
         await send(ws, {"type": "error", "text": "You're sending messages too fast. Wait a moment."})
 
     elif msg_type.startswith("poll_"):
@@ -396,6 +396,9 @@ async def handle_message(ws, msg):
         if target is not None:
             await send(target, dm)
         await send(ws, dm)
+
+    elif msg_type == "delete":
+        await delete_message(ws, msg)
 
     elif msg_type == "read":
         # Read receipts: the page says "I've read up to message N here".
@@ -444,6 +447,39 @@ async def handle_message(ws, msg):
 
     else:
         print("Ignored unknown message:", for_log(msg))
+
+
+async def delete_message(ws, msg):
+    """
+    Delete a message for everyone. You may delete your own messages, at any
+    time. Admins may also delete anyone's message in a room (to moderate), but
+    never inside other people's private chats.
+    """
+    me = clients[ws]
+    msg_id = msg.get("msg_id")
+    valid = isinstance(msg_id, int) and not isinstance(msg_id, bool) and msg_id > 0
+    row = db.get_message(msg_id) if valid else None
+    # Same answer whether it doesn't exist or you can't see it, so nobody can
+    # find out about messages in rooms they're not allowed into.
+    if row is None or not polls.can_use(me["id"], row["room"]):
+        await send(ws, {"type": "error", "text": "There's no such message."})
+        return
+    if row["deleted"]:
+        return  # someone else deleted it a moment ago
+    conv = row["room"]
+    mine = row["sender_id"] == me["id"]
+    moderating = not conv.startswith("dm:") and db.is_admin(me["id"])  # checked fresh, like other admin actions
+    if not (mine or moderating):
+        await send(ws, {"type": "error", "text": "You can only delete your own messages."})
+        return
+    db.delete_message(row["id"])
+    # Not the text: a deleted message shouldn't live on in the server's log.
+    print(f"{me['name']} deleted message {row['id']}" + ("" if mine else f" by {row['sender_name']} (as admin)"))
+    # Everyone who can see the conversation, also people looking at another
+    # room right now: their page still has this message on screen.
+    for target, info in list(clients.items()):
+        if info["id"] is not None and polls.can_use(info["id"], conv):
+            await send(target, {"type": "deleted", "key": page_key(info["id"], conv), "msg_id": row["id"]})
 
 
 async def handle_poll(ws, msg):
