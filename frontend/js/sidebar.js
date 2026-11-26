@@ -3,6 +3,7 @@
 import { state, conversations } from "./state.js";
 import { sendJSON } from "./connection.js";
 import { getConversation, openConversation } from "./conversations.js";
+import { updateTitle } from "./notify.js";
 
 const roomsList = document.getElementById("rooms");
 const usersList = document.getElementById("users");
@@ -31,6 +32,7 @@ setSidebarHidden(localStorage.getItem("sidebarHidden") === "1");
 function updateToggleBadge() {
   let unread = 0;
   for (const c of conversations.values()) unread += c.unread;
+  updateTitle(); // "(3) WebSocket Chat" in the tab
   const show = app.classList.contains("sidebar-hidden") && unread > 0;
   toggleBadge.classList.toggle("hidden", !show);
   toggleBadge.textContent = unread > 99 ? "99+" : String(unread);
