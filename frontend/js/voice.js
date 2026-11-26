@@ -20,7 +20,11 @@ import { openBoard } from "./board.js";
 
 const SPEAK_LEVEL = 0.035;  // how loud (0 to 1) counts as speaking
 const SPEAK_HOLD = 350;     // ms the ring stays on after the sound stops, so it doesn't flicker
-const METER_EVERY = 100;    // ms between volume checks
+// Each check listens to the last ~85 ms of sound (4096 samples at 48 kHz) and
+// runs every 80 ms, so no sound falls between two checks. (Listening to only
+// 10 ms every 100 ms missed short words, and the test's short beeps.)
+const METER_EVERY = 80;     // ms between volume checks
+const METER_SAMPLES = 4096;
 const ANSWER_WAIT = 4000;   // ms to wait for the server to answer voice_join
 
 const voice = {
@@ -287,7 +291,7 @@ export function voiceFollow() {
 function makeMeter(stream) {
   if (!voice.audioCtx) return null;
   const analyser = voice.audioCtx.createAnalyser();
-  analyser.fftSize = 512;
+  analyser.fftSize = METER_SAMPLES;
   voice.audioCtx.createMediaStreamSource(stream).connect(analyser); // listens only, plays nothing
   return { analyser, data: new Uint8Array(analyser.fftSize) };
 }
