@@ -8,6 +8,7 @@ import { renderTyping } from "./typing.js";
 import { focusInput } from "./composer.js";
 import { buildPollCard } from "./polls.js";
 import { boardFollow, buildSnapshotCard } from "./board.js";
+import { voiceFollow } from "./voice.js";
 
 const logs = document.getElementById("logs");
 const titleEl = document.getElementById("title");
@@ -49,6 +50,7 @@ export function openConversation(key) {
   renderSidebar();
   renderTyping();
   boardFollow(key); // an open board switches to this conversation's board
+  voiceFollow();    // show this conversation's huddle banner, if there is one
   focusInput();
 }
 
