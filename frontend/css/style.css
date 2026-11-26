@@ -746,6 +746,76 @@ body {
 .banner-close svg { width: 14px; height: 14px; }
 .banner-close:hover { background: #dbeafe; }
 
+/* Voice huddle: the bar above the message box, and the headset button on the board */
+.voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 12px 8px;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid #bbf7d0;
+  border-radius: 12px;
+  background: #f0fdf4;
+  color: #14532d;
+  font-size: 0.85rem;
+  flex-wrap: wrap;
+}
+.voice-icon { width: 16px; height: 16px; color: #16a34a; flex-shrink: 0; }
+.voice-text { flex: 1; min-width: 140px; }
+.voice-people { display: flex; flex-wrap: wrap; gap: 6px; }
+.voice-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 13px;
+  background: #fff;
+  border: 1px solid #d1fae5;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #166534;
+  transition: box-shadow 0.12s;
+}
+.voice-chip svg { width: 13px; height: 13px; color: #b91c1c; }
+/* A green ring while someone is speaking */
+.voice-chip.speaking { box-shadow: 0 0 0 2px #22c55e; }
+.voice-chip.connecting { opacity: 0.55; }
+.voice-join, .voice-leave {
+  height: 32px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.8rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.voice-join { background: #16a34a; color: #fff; }
+.voice-join:hover { background: #15803d; }
+.voice-leave { background: #dc2626; color: #fff; }
+.voice-leave:hover { background: #b91c1c; }
+.voice-ctl { border-color: #d1fae5; background: #fff; width: 32px; height: 32px; }
+.voice-ctl .icon-mic-off { display: none; }
+.voice-ctl.active { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+.voice-ctl.active .icon-mic { display: none; }
+.voice-ctl.active .icon-mic-off { display: block; }
+.voice-bar .banner-close { color: #14532d; }
+.voice-bar .banner-close:hover { background: #dcfce7; }
+/* The headset on the board: green while you're in its huddle, a dot when others are talking */
+.icon-btn.voice-btn { position: relative; }
+.icon-btn.voice-btn.active { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.icon-btn.voice-btn.live::after {
+  content: "";
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
 /* A board snapshot in the chat */
 .snapshot { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .snapshot-picture { border: 1px solid #e6e9ee; border-radius: 8px; background: #fff; }
