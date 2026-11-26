@@ -9,6 +9,7 @@ Then open index.html, log in with an account your admin created, and chat.
 import asyncio
 import json
 import re
+import sys
 import time
 
 import websockets
@@ -22,6 +23,8 @@ from ratelimit import RateLimiter, RateLimiterGroup  # our own file (ratelimit.p
 
 DEFAULT_ROOM = "general"
 MAX_TEXT = 2000
+# The reactions anyone can add to a message (the page shows the same ones).
+REACTIONS = ("👍", "❤️", "😂", "😮", "🎉")
 
 # Heartbeats: the websockets library pings every client this often (seconds),
 # and drops any client that doesn't answer within PING_TIMEOUT. That's how the
@@ -373,7 +376,8 @@ async def handle_message(ws, msg):
         # Everything below needs the client to have joined a room first.
         print("Ignored message before join:", for_log(msg))
 
-    elif msg_type in ("chat", "dm", "poll_create", "poll_vote", "board_snapshot", "delete") and not me["message_limit"].allow():
+    elif (msg_type in ("chat", "dm", "poll_create", "poll_vote", "board_snapshot", "delete", "edit", "react")
+          and not me["message_limit"].allow()):
         await send(ws, {"type": "error", "text": "You're sending messages too fast. Wait a moment."})
 
     elif msg_type.startswith("poll_"):
@@ -413,6 +417,12 @@ async def handle_message(ws, msg):
 
     elif msg_type == "delete":
         await delete_message(ws, msg)
+
+    elif msg_type == "edit":
+        await edit_message(ws, msg)
+
+    elif msg_type == "react":
+        await react(ws, msg)
 
     elif msg_type == "read":
         # Read receipts: the page says "I've read up to message N here".
@@ -463,6 +473,35 @@ async def handle_message(ws, msg):
         print("Ignored unknown message:", for_log(msg))
 
 
+# --- Changing a message after it was sent: delete, edit, react ---
+
+async def find_message(ws, msg):
+    """
+    The message a request is about, if it exists and this person can see it.
+    Otherwise says "There's no such message." and returns None: the same answer
+    either way, so nobody can find out about messages in rooms they can't enter.
+    """
+    me = clients[ws]
+    msg_id = msg.get("msg_id")
+    valid = isinstance(msg_id, int) and not isinstance(msg_id, bool) and msg_id > 0
+    row = db.get_message(msg_id) if valid else None
+    if row is None or not polls.can_use(me["id"], row["room"]):
+        await send(ws, {"type": "error", "text": "There's no such message."})
+        return None
+    return row
+
+
+async def send_to_everyone_who_can_see(conv, message: dict):
+    """
+    Everyone who can see a conversation, also people looking at another room
+    right now: their page still has its messages on screen. Each page names the
+    conversation its own way, so the right "key" is added for each person.
+    """
+    for target, info in list(clients.items()):
+        if info["id"] is not None and polls.can_use(info["id"], conv):
+            await send(target, {**message, "key": page_key(info["id"], conv)})
+
+
 async def delete_message(ws, msg):
     """
     Delete a message for everyone. You may delete your own messages, at any
@@ -470,13 +509,8 @@ async def delete_message(ws, msg):
     never inside other people's private chats.
     """
     me = clients[ws]
-    msg_id = msg.get("msg_id")
-    valid = isinstance(msg_id, int) and not isinstance(msg_id, bool) and msg_id > 0
-    row = db.get_message(msg_id) if valid else None
-    # Same answer whether it doesn't exist or you can't see it, so nobody can
-    # find out about messages in rooms they're not allowed into.
-    if row is None or not polls.can_use(me["id"], row["room"]):
-        await send(ws, {"type": "error", "text": "There's no such message."})
+    row = await find_message(ws, msg)
+    if row is None:
         return
     if row["deleted"]:
         return  # someone else deleted it a moment ago
@@ -489,11 +523,49 @@ async def delete_message(ws, msg):
     db.delete_message(row["id"])
     # Not the text: a deleted message shouldn't live on in the server's log.
     print(f"{me['name']} deleted message {row['id']}" + ("" if mine else f" by {row['sender_name']} (as admin)"))
-    # Everyone who can see the conversation, also people looking at another
-    # room right now: their page still has this message on screen.
-    for target, info in list(clients.items()):
-        if info["id"] is not None and polls.can_use(info["id"], conv):
-            await send(target, {"type": "deleted", "key": page_key(info["id"], conv), "msg_id": row["id"]})
+    await send_to_everyone_who_can_see(conv, {"type": "deleted", "msg_id": row["id"]})
+
+
+async def edit_message(ws, msg):
+    """
+    Change the text of one of your own messages. Only plain text messages:
+    a poll or a board snapshot can't be edited (delete it and post a new one).
+    Admins can't edit other people's words; they can only delete them.
+    """
+    me = clients[ws]
+    row = await find_message(ws, msg)
+    if row is None or row["deleted"]:
+        return
+    if row["sender_id"] != me["id"]:
+        await send(ws, {"type": "error", "text": "You can only edit your own messages."})
+        return
+    if row["poll_id"] is not None or row["snapshot_id"] is not None:
+        await send(ws, {"type": "error", "text": "Only text messages can be edited."})
+        return
+    text = str(msg.get("text") or "").strip()[:MAX_TEXT]
+    if not text:
+        await send(ws, {"type": "error", "text": "A message can't be empty. To remove it, delete it."})
+        return
+    if text == row["text"]:
+        return  # nothing changed
+    db.edit_message(row["id"], text)
+    print(f"{me['name']} edited message {row['id']}")  # not the words, like any message
+    await send_to_everyone_who_can_see(row["room"], {"type": "edited", "msg_id": row["id"], "text": text})
+
+
+async def react(ws, msg):
+    """Add a reaction to a message, or take yours back. Anyone who can see the message may."""
+    me = clients[ws]
+    row = await find_message(ws, msg)
+    if row is None or row["deleted"]:
+        return
+    emoji = msg.get("emoji")
+    if emoji not in REACTIONS:
+        await send(ws, {"type": "error", "text": "Unknown reaction."})
+        return
+    db.toggle_reaction(row["id"], me["id"], emoji)
+    reactions = db.reactions_for([row["id"]]).get(row["id"], [])
+    await send_to_everyone_who_can_see(row["room"], {"type": "reactions", "msg_id": row["id"], "reactions": reactions})
 
 
 async def handle_poll(ws, msg):
@@ -889,7 +961,21 @@ async def handler(ws):
             await send_user_list()
 
 
+def make_output_safe():
+    """
+    Never let printing break the chat. When the server's output goes to a pipe
+    or a log file on Windows, Python uses an old character set (cp1252) with no
+    emoji, and printing "👍" raises an error. That error used to be caught as a
+    "bad message", so any message with an emoji was silently thrown away.
+    Now a character that can't be shown is printed as a code (like 👍) instead.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
+
+
 async def main():
+    make_output_safe()
     db.init_db()
     async with websockets.serve(handler, "localhost", 8765,
                                 ping_interval=PING_INTERVAL, ping_timeout=PING_TIMEOUT):
