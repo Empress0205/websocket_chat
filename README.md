@@ -149,6 +149,14 @@ Before a real launch, I reviewed the code for what would have to change. This is
 - **More room:** the « button at the top of the sidebar folds it into a thin strip down the left edge; » opens it again. Your choice is remembered in this browser.
 - **Nothing missed:** while the sidebar is folded, the » button shows a red badge with how many unread messages are waiting.
 
+### Extra: delete a message
+
+- **Point at one of your messages** and click the small bin next to its time. After you confirm, it's deleted for everyone, straight away.
+- **Everyone sees "This message was deleted"** in its place, so replies to it still make sense. The text itself is wiped from the database. Deleting a poll also removes its votes, and deleting a board snapshot removes the picture.
+- **Who can delete:** you can delete your own messages, at any time. Admins can also delete anyone's message in a room (to moderate), but never inside other people's private chats.
+
+What I learned: a **"soft" delete** keeps the message's row but empties it. Its id stays, so read receipts, unread counts and the order of the chat keep working; only a `deleted` flag changes. The server checks who may delete every time (an admin's rights are read fresh from the database), and it gives the same "There's no such message" answer whether a message doesn't exist or is in a room you can't enter, so nobody can probe for hidden messages. The notice goes to everyone who can see the conversation, not just the people in it right now, because a page keeps rooms you visited earlier on screen.
+
 ### Extra: live polls
 
 - **Make a poll** in any room or private chat: click **Poll** next to the message box, write the question and the options, and click *Create poll*. A poll has 2 to 10 options. Shortcut: type `/poll Where should we have lunch? | Pizza | Pilau | Chips mayai`.
@@ -331,6 +339,8 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Client → server | `read` | "I've read up to here": `{ "type": "read", "msg_id": 42, "room": "general" }` or `"with": "<user id>"` for a private chat |
 | Server → room / 1 person | `seen` | Someone read up to `msg_id`: `{ "room", "id", "name", "msg_id" }` in a room, or `{ "with": "<reader id>", "msg_id" }` in a private chat |
 | Server → client | `unread` | After logging in: messages waiting per conversation, e.g. `{ "counts": { "room:general": 3, "dm:5": 1 } }` |
+| Client → server | `delete` | Delete a message for everyone: `{ "type": "delete", "msg_id": 42 }`. Your own, or (admins) anyone's in a room |
+| Server → client | `deleted` | A message was deleted: `{ "key": "room:general" or "dm:<id>", "msg_id" }`. Sent to everyone who can see that conversation. In `history`, a deleted message comes with `"deleted": true` and no text |
 | Client → server | `dm_history` | Opened a private chat: `{ "type": "dm_history", "with": "<user id>" }` |
 | Client → server | `typing` | "I'm typing", at most once per second. Add `"to": "<id>"` when typing in a private chat |
 | Server → room / 1 person | `typing` | Passed on to the room (with `room`) or to the private-chat partner (with `"dm": true`) |
