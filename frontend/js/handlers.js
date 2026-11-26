@@ -68,6 +68,8 @@ export function handleMessage(msg) {
     case "board_removed":
     case "board_cleared":
     case "board_cursor":
+    case "board_moving":
+    case "board_moved":
       // Everything to do with the drawing board (see board.js).
       return handleBoardMessage(msg);
 
