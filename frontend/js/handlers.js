@@ -6,7 +6,7 @@ import { state, conversations } from "./state.js";
 import { sendJSON } from "./connection.js";
 import {
   getConversation, openConversation, renderTitle, addMessage, addInfo,
-  showHistory, updateReceipts, showDeleted,
+  showHistory, updateReceipts, showDeleted, showEdited, showReactions,
 } from "./conversations.js";
 import { renderSidebar } from "./sidebar.js";
 import { showLogin, hideLogin } from "./login.js";
@@ -91,6 +91,14 @@ export function handleMessage(msg) {
     case "deleted":
       // A message was deleted for everyone (by its sender, or an admin).
       return showDeleted(msg.key, msg.msg_id);
+
+    case "edited":
+      // Its sender changed a message's words.
+      return showEdited(msg.key, msg.msg_id, msg.text);
+
+    case "reactions":
+      // Someone reacted to a message, or took a reaction back: all of its reactions now.
+      return showReactions(msg.key, msg.msg_id, msg.reactions);
 
     case "poll_update":
       // Someone voted or the poll was closed: redraw it with the new totals.
