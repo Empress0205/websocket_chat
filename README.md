@@ -177,6 +177,35 @@ What I learned:
 - **Two kinds of update:** a pen line grows, so each batch *adds* points. A shape is only ever two points (where the drag started and where it is now), so each batch *replaces* the shape. Every shape is drawn from those two points, which is why adding a new one is just a few lines of drawing code.
 - **Not everything is logged:** drawing and pointer messages are never printed by the server, after the stress test showed what logging every message costs.
 
+### Extra: voice huddle on the board
+
+- **Talk while you draw.** Click the headset button at the top of the board, and you're in that conversation's *huddle*. Others in the room or private chat see a green bar: *"alice is talking on the board"* with a **Join** button. Joining opens the board too.
+- **While you're in a huddle**, the bar above the message box shows who's in it. A green ring lights up around whoever is speaking, and a crossed-out mic marks anyone muted. **Mute** and **Leave** are there too.
+- **It stays on** when you close the board or switch to another chat, so you can look something up while you talk. You're in one huddle at a time, of up to 5 people.
+- **Leaving is automatic** if you close the tab, log out or lose the connection. You join again with a click, because the page never turns your microphone back on by itself.
+- **Try it on one computer:** log in as two different people in two different browsers (say Chrome and Edge). Wear headphones, or the two tabs will hear each other and echo.
+
+What I learned: WebRTC sends the audio **straight from browser to browser**. Our server never touches it; it only passes along the notes two browsers need to set up the call (called *signalling*):
+
+```
+           Python server: who's in each huddle, passes notes along
+              ▲                                         ▲
+  WebSocket   │  offer / answer (SDP), ICE candidates   │   WebSocket
+              │                                         │
+        Alice's page ◄══════ audio, direct (UDP) ══════► Bob's page
+              │                                         │
+              └──────► STUN server (Google, free) ◄─────┘
+                       "what's my public address?"
+```
+
+- **Offer and answer (SDP):** each side describes the audio it will send (the Opus codec) and the keys that encrypt it. WebRTC audio is always encrypted.
+- **ICE candidates:** every address and port where a browser might be reached. A **STUN** server tells the browser what its address looks like from the internet. The two browsers try the pairs until one works.
+- **Mesh:** everyone connects to everyone, one `RTCPeerConnection` per person. Fine for a handful of people; at 5, each browser uploads its audio 4 times. Bigger calls use an SFU, a server that forwards each stream once.
+- **No two people call each other at once:** whoever joins calls everyone already there, and the others only answer.
+- **The relay is locked down:** the server only passes a note between two people in the same huddle, fills in who sent it itself (a page can't pretend to be someone else), keeps only the expected fields, and drops anything oversized.
+- **Speaking rings cost no messages:** each page measures the volume of the sound it plays (Web Audio's `AnalyserNode`). **Mute** switches the microphone track off, so the call stays connected and unmuting is instant.
+- **Browsers only allow the microphone on `https://` or `localhost`.** So for now huddles work on one computer. Between computers they need Phase 6's `wss://` and HTTPS.
+
 ### Added in Phase 5
 
 - **Automatic reconnecting.** If the connection drops, the header shows "Reconnecting in 4s…" with a yellow dot, and the page reconnects by itself, back in the same room and conversation.
@@ -232,6 +261,7 @@ The project is split into a **backend** (the Python server) and a **frontend** (
 │   ├── ratelimit.py       # Stops anyone sending too much, too fast
 │   ├── polls.py           # The rules for polls: what a poll may contain, who may vote
 │   ├── board.py           # The rules for the drawing board: tools, colours, points
+│   ├── voice.py           # Voice huddles: who is in each one, checking the call setup notes
 │   ├── manage.py          # Admin tasks from the command line
 │   ├── requirements.txt   # Python dependencies
 │   └── chat.db            # The database (created on first run, never committed)
@@ -252,7 +282,8 @@ The project is split into a **backend** (the Python server) and a **frontend** (
         ├── typing.js          # "... is typing"
         ├── composer.js        # The message box, Send button and /poll command
         ├── polls.js           # Poll cards and voting
-        └── board.js           # The shared drawing board in the side panel
+        ├── board.js           # The shared drawing board in the side panel
+        └── voice.js           # Voice huddles on the board (WebRTC)
 ```
 
 The JavaScript files are **ES modules**: each one says what it `export`s, and what it `import`s from the others, so it's clear how they depend on each other.
@@ -356,6 +387,14 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Server → board | `board_viewers` | Who has the board open: `[{ "id", "name" }]` |
 | Server → client | `board_activity` | Someone started drawing on the board of a conversation you're in, and yours is closed: `{ "key", "id", "name" }`. At most once every 20 seconds per person drawing |
 | Client → server | `board_snapshot` | Post a picture of the board to the conversation. It arrives as a `chat` / `dm` message with a `board` field holding the frozen strokes |
+| Client → server | `voice_join` / `voice_leave` | Join the huddle of a room (`"room": "general"`) or a private chat (`"with": "<user id>"`), or leave it. Joining another huddle leaves the first |
+| Server → client | `voice_joined` | You're in: `{ "key", "peers": [{ id, name, muted }], "ice_servers": [...], "max": 5 }`. The page calls each of the `peers` |
+| Server → client | `voice_refused` / `voice_ended` | You couldn't join (full, or no access), or were taken out (your access to the room was removed): `{ "text" }` |
+| Server → conversation | `voice_roster` | Who's in a huddle now: `{ "key", "people": [{ id, name, muted }] }`. Sent to everyone who can see that conversation, and after logging in for each huddle going on |
+| Client → server | `voice_mute` | `{ "muted": true }` or `false`. Shows in the roster |
+| Client → server → 1 person | `voice_offer` / `voice_answer` | WebRTC call setup: `{ "to": "<user id>", "sdp": { "type", "sdp" } }`. Only between two people in the same huddle; passed on with `from` and `name` filled in by the server |
+| Client → server → 1 person | `voice_ice` | One ICE candidate: `{ "to", "candidate": { candidate, sdpMid, sdpMLineIndex, usernameFragment } }`, passed on with `from` |
+| Server → huddle | `voice_left` | Someone left or disconnected: `{ "id" }`. Hang up on them |
 | Server → client | `error` | Something went wrong, e.g. a private message to someone who just left, or sending too fast |
 
 ## Configuration
@@ -407,6 +446,9 @@ The project deliberately keeps things simple. These gaps are what the next phase
 |---|---|
 | Passwords travel unencrypted over `ws://`, which is only acceptable on your own computer | Phase 6 (`wss://`) |
 | Only runs on `localhost` | Phase 6 |
+| Voice huddles only work on one computer: browsers allow the microphone only on `https://` or `localhost` | Phase 6 (HTTPS) |
+| Some networks (strict firewalls, some mobile data) block direct audio, so a huddle can't connect there | Later: a TURN relay server, added to `ICE_SERVERS` in `voice.py` |
+| A huddle holds at most 5 people, because everyone connects to everyone | Later, if needed: an SFU media server |
 
 ## License
 
