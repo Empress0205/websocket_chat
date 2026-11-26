@@ -134,7 +134,7 @@ Before a real launch, I reviewed the code for what would have to change. This is
 
 **Nice to have**
 
-14. **Automated tests and CI.** Everything so far has been tested by hand.
+14. **Automated tests and CI.** The tests are written (see [Tests](#tests)); what's left is running them automatically on every push (CI), e.g. with GitHub Actions.
 15. **Monitoring:** number of connections, errors and message rates, with alerts.
 16. **Password reset and an audit log for admins,** recording who created accounts and changed room access.
 
@@ -277,6 +277,13 @@ The project is split into a **backend** (the Python server) and a **frontend** (
 │   ├── manage.py          # Admin tasks from the command line
 │   ├── requirements.txt   # Python dependencies
 │   └── chat.db            # The database (created on first run, never committed)
+├── tests/                 # Automated tests (see "Tests" below)
+│   ├── helpers.py         # A throwaway server per test, and a scripted chat client
+│   ├── test_core.py       # Logging in, rooms, private messages, the rate limit
+│   ├── test_voice.py      # Voice huddles: who's in them, and the signalling relay
+│   ├── test_delete.py     # Deleting messages: who may, and who is told
+│   ├── test_board.py      # The board: drawing, erasing, moving
+│   └── test_browser.py    # Two people in real Chrome windows, using the actual page
 ├── tools/
 │   └── stress_test.py     # Load test: many fake users chatting at once
 └── frontend/
@@ -419,6 +426,28 @@ By default the server listens on `localhost:8765` and the page connects to `ws:/
 
 - **Server:** edit the host and port in `main()` in `backend/server.py`.
 - **Client:** edit `SERVER_URL` at the top of `frontend/js/connection.js`.
+
+## Tests
+
+From the project folder:
+
+```bash
+python -m unittest discover -s tests
+```
+
+That runs 51 tests in about a minute, using only Python's built-in `unittest`. Each test starts its own server on a free port with a brand-new database in a temporary folder, so your real server and `chat.db` are never touched, and no test can affect another.
+
+- **Server tests (42, about 30 seconds):** scripted users log in and send messages, and the tests check what the server sends back. For example: a huddle refuses a sixth person, nobody can pretend to be someone else in the WebRTC handshake, a deleted message's text is really gone from the database, an admin can't delete inside other people's private chats, and a dragged shape stops at the board's edge without changing shape.
+- **Browser tests (9, about 30 seconds):** two people in real Chrome windows use the actual page. Alice starts a huddle and Bob joins; Chrome's fake microphone plays a beep, and the test waits for each person's speaking ring to light up, which proves the audio really travels browser to browser. Others check that a deleted message turns into the placeholder (live and after a reload), and that drawing still lands in the right place when zoomed in. They need [Playwright](https://playwright.dev/python/) (`pip install playwright`) and Chrome; without them they're skipped.
+
+For a quick run without the browser tests: `set SKIP_BROWSER=1` (PowerShell: `$env:SKIP_BROWSER=1`), then run the same command. To see what the server prints while a test runs, set `SERVER_LOG=1` the same way.
+
+What I learned:
+
+- **A test must fail when the code is wrong.** I broke the delete check on purpose (anyone could delete anything), and `test_cannot_delete_someone_elses_message` failed, naming exactly what broke. Then I put it back.
+- **Tests must not share state.** Every test logs in as "alice", and the server remembers login attempts per username in memory. From the sixth test on, Alice was "trying too often" and 26 tests failed. Each test now starts with a fresh login counter, like a fresh database.
+- **"localhost" is two addresses on Windows** (IPv6 `::1` and IPv4 `127.0.0.1`). A test server on "any free port" got a different port on each, and connecting to the wrong one first cost 2 seconds per connection, so the same tests took anywhere from 15 seconds to over a minute. The tests now use `127.0.0.1` directly.
+- **Slow on purpose, but not in tests:** password checks use 600,000 rounds to slow down attackers (about 0.3 s each). The tests lower that to 1,000 rounds for their own throwaway accounts, so dozens of logins take milliseconds.
 
 ## Stress test
 
