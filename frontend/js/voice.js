@@ -382,13 +382,12 @@ function render() {
     }
   }
 
-  // The headset button in the board panel: join this conversation's huddle, or leave it.
+  // The Talk button in the board panel: join this conversation's huddle, or leave it.
   const here = inCall && voice.key === active;
   panelBtn.classList.toggle("active", here);
   panelBtn.setAttribute("aria-pressed", String(here));
   panelBtn.title = here ? "Leave the huddle"
     : roster.length ? `Join the huddle (${roster.length} talking)` : "Start a huddle on this board";
-  panelBtn.setAttribute("aria-label", panelBtn.title);
   panelBtn.classList.toggle("live", !here && roster.length > 0);
 }
 
