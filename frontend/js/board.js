@@ -7,15 +7,21 @@
 //
 // Every screen is a different size, so all points are in "board units" on a
 // fixed 2000 x 1250 board (the same numbers as backend/board.py). Each page
-// scales the board to fit the height of its panel; a narrow panel scrolls
-// sideways to reach the rest, and the expanded board shows nearly all of it.
+// scales the board to fit the height of its panel ("100%"). You can zoom in
+// and out and move around (pan); that's only on your screen, like Expand.
+//
+// The canvas is always exactly the size of the panel. Zooming doesn't make it
+// bigger: the board is drawn into it with a scale and an offset ("the view").
+// A canvas the size of a 4x board would take hundreds of megabytes.
 
 import { state } from "./state.js";
 import { sendJSON } from "./connection.js";
 
 const W = 2000;
 const H = 1250;
-const BOARD_VERSION = 2;  // the same as VERSION in backend/board.py
+const BOARD_VERSION = 3;  // the same as VERSION in backend/board.py
+const ZOOM_MAX = 4;       // 400% of the "fit the height" size
+const ZOOM_STEP = 1.25;   // each click of + or -
 const COLORS = { black: "#111827", blue: "#2563eb", red: "#dc2626", green: "#16a34a" };
 // Shapes are drawn between two points: where the drag started and where it
 // is now. The same list is in backend/board.py.
@@ -54,8 +60,16 @@ const board = {
   changed: false,        // my shape changed since it was last sent
   erased: new Set(),     // strokes I've asked to erase (so I ask only once)
   hiddenId: null,        // a label hidden while its text is being edited
-  view: { scale: 1, x: 0, y: 0, dpr: 1, width: 0, height: 0 },
+  selected: null,        // the stroke picked with the Select tool (its id)
+  drag: null,            // the stroke I'm dragging: { id, from: {x, y}, dx, dy }
+  moving: new Map(),     // strokes being dragged (by anyone) and not saved yet: id -> { dx, dy, by }
+  pan: null,             // panning by dragging: where it started
+  zoom: 1,               // 1 = the board fits the panel's height
+  // How the board is drawn: board units * scale + (x, y) = screen pixels.
+  // base is the "100%" scale; scale = base * zoom.
+  view: { base: 1, scale: 1, x: 0, y: 0, dpr: 1, width: 0, height: 0 },
 };
+let spaceHeld = false;    // Space + drag pans, whatever the tool
 let strokeCount = 0;
 let sendTimer = null;
 let answerTimer = null;   // notices a server that never answers board_open
@@ -107,6 +121,9 @@ function requestBoard(key) {
   board.live.clear();
   board.cursors.clear();
   board.erased.clear();
+  board.moving.clear();
+  board.selected = null;
+  board.drag = null;
   board.viewers = [];
   renderViewers();
   setNote(NOTE);
@@ -190,10 +207,11 @@ export function handleBoardMessage(msg) {
 
     case "board_viewers": {
       board.viewers = msg.viewers;
-      // Forget the cursors and unfinished lines of people who left.
+      // Forget the cursors, unfinished lines and half-done moves of people who left.
       const here = new Set(msg.viewers.map(v => v.id));
       for (const id of board.cursors.keys()) if (!here.has(id)) board.cursors.delete(id);
       for (const k of board.live.keys()) if (!here.has(k.split(":")[0])) board.live.delete(k);
+      for (const [id, m] of board.moving) if (!here.has(m.by)) board.moving.delete(id);
       renderViewers();
       break;
     }
@@ -218,12 +236,34 @@ export function handleBoardMessage(msg) {
       break;
 
     case "board_removed":
-      for (const id of msg.ids) board.strokes.delete(id);
+      for (const id of msg.ids) {
+        board.strokes.delete(id);
+        board.moving.delete(id);
+        if (board.selected === id) board.selected = null;
+        if (board.drag && board.drag.id === id) board.drag = null;
+      }
+      break;
+
+    case "board_moving":
+      // Someone is dragging a stroke: show it where they have it now.
+      if (!board.drag || board.drag.id !== msg.stroke) {
+        board.moving.set(msg.stroke, { dx: msg.dx, dy: msg.dy, by: msg.id });
+      }
+      break;
+
+    case "board_moved":
+      // A stroke was dropped in its new place, and saved: swap the preview for it.
+      if (board.drag && board.drag.id === msg.stroke_id && msg.id !== state.myId) break; // I'm dragging it now
+      board.moving.delete(msg.stroke_id);
+      if (msg.stroke) board.strokes.set(msg.stroke.id, msg.stroke); // same place in the drawing order
       break;
 
     case "board_cleared":
       board.strokes.clear();
       board.live.clear();
+      board.moving.clear();
+      board.selected = null;
+      board.drag = null;
       setNote(`${msg.by === state.myName ? "You" : msg.by} cleared the board.`);
       break;
 
@@ -268,30 +308,115 @@ function setNote(text, sticky = false) {
 
 // --- Drawing on the screen ---
 
-// Fit the board to the panel's height. The board is wide, so in the side panel
-// it's wider than the space and you scroll sideways for more room. Expanded,
-// it fills nearly all of the space (centred if there's width to spare).
+// The canvas fills the panel. "100%" fits the board to the panel's height:
+// the board is wide, so in the side panel you pan sideways for the rest.
+// Expanded, it fills nearly all of the space (centred if there's room to spare).
 function resize() {
   const v = board.view;
-  const areaWidth = wrap.clientWidth;    // inside the scrollbar, if there is one
-  const areaHeight = wrap.clientHeight;
+  const first = v.width === 0;
   v.dpr = window.devicePixelRatio || 1;
-  v.scale = areaHeight / H;
+  v.width = wrap.clientWidth;
+  v.height = wrap.clientHeight;
+  v.base = v.height / H;
   // Only a little too wide (up to 15%)? Fit the width instead: a slightly
-  // smaller board beats a scrollbar that scrolls almost nothing.
-  if (W * v.scale > areaWidth && W * v.scale <= areaWidth * 1.15) v.scale = areaWidth / W;
-  const boardWidth = W * v.scale;
-  v.width = Math.max(areaWidth, boardWidth);
-  v.height = areaHeight;
-  v.x = (v.width - boardWidth) / 2;            // 0 when it scrolls; centred when it fits
-  v.y = (areaHeight - H * v.scale) / 2;        // centred when width-fitted
+  // smaller board beats panning sideways for almost nothing.
+  if (W * v.base > v.width && W * v.base <= v.width * 1.15) v.base = v.width / W;
+  board.zoom = Math.min(Math.max(board.zoom, minZoom()), ZOOM_MAX);
+  v.scale = v.base * board.zoom;
+  if (first) v.x = v.y = 0;
+  clampView();
   canvas.style.width = v.width + "px";
   canvas.style.height = v.height + "px";
   canvas.width = Math.round(v.width * v.dpr);
   canvas.height = Math.round(v.height * v.dpr);
+  updateZoomLabel();
   queueDraw();
 }
 new ResizeObserver(() => { if (board.open) resize(); }).observe(wrap);
+
+// --- Zoom and pan (only on your screen) ---
+
+// Zoomed out far enough to see the whole board, but never smaller than that.
+function minZoom() {
+  const v = board.view;
+  return Math.min(1, Math.min(v.width / W, v.height / H) / v.base);
+}
+
+// Keep the board in view: no panning past its edges, and centred when it's
+// smaller than the panel (like a scroll area, but our own).
+function clampView() {
+  const v = board.view;
+  const bw = W * v.scale, bh = H * v.scale;
+  v.x = bw <= v.width ? (v.width - bw) / 2 : Math.min(0, Math.max(v.width - bw, v.x));
+  v.y = bh <= v.height ? (v.height - bh) / 2 : Math.min(0, Math.max(v.height - bh, v.y));
+}
+
+// Zoom so the board point under (sx, sy) stays under it: zooming "toward the mouse".
+function zoomAt(zoom, sx = board.view.width / 2, sy = board.view.height / 2) {
+  const v = board.view;
+  zoom = Math.min(Math.max(zoom, minZoom()), ZOOM_MAX);
+  if (zoom === board.zoom) return;
+  commitText(); // the text box sits at a fixed spot on screen: finish the label first
+  const bx = (sx - v.x) / v.scale, by = (sy - v.y) / v.scale;
+  board.zoom = zoom;
+  v.scale = v.base * zoom;
+  v.x = sx - bx * v.scale;
+  v.y = sy - by * v.scale;
+  clampView();
+  updateZoomLabel();
+  queueDraw();
+}
+
+function panBy(dx, dy) {
+  const v = board.view;
+  v.x += dx;
+  v.y += dy;
+  clampView();
+  queueDraw();
+}
+
+const zoomLabel = document.getElementById("zoom-reset");
+function updateZoomLabel() {
+  zoomLabel.textContent = Math.round(board.zoom * 100) + "%";
+}
+
+document.getElementById("zoom-in").onclick = () => zoomAt(board.zoom * ZOOM_STEP);
+document.getElementById("zoom-out").onclick = () => zoomAt(board.zoom / ZOOM_STEP);
+zoomLabel.onclick = () => {
+  // Back to 100%, at the left edge.
+  commitText();
+  board.zoom = 1;
+  board.view.scale = board.view.base;
+  board.view.x = board.view.y = 0;
+  clampView();
+  updateZoomLabel();
+  queueDraw();
+};
+
+// The mouse wheel or touchpad: Ctrl + wheel (or a pinch, which the browser
+// sends as Ctrl + wheel) zooms; otherwise it pans.
+wrap.addEventListener("wheel", (e) => {
+  if (!board.open) return;
+  e.preventDefault(); // don't scroll the page
+  const lines = e.deltaMode === 1 ? 16 : 1; // some mice count lines, not pixels
+  if (e.ctrlKey || e.metaKey) {
+    const rect = canvas.getBoundingClientRect();
+    zoomAt(board.zoom * Math.exp(-e.deltaY * lines * 0.002), e.clientX - rect.left, e.clientY - rect.top);
+    return;
+  }
+  let dx = e.deltaX * lines, dy = e.deltaY * lines;
+  // An ordinary wheel only goes up and down. If the board can't move up and
+  // down (it fits the height), let it move sideways instead. Shift does that too.
+  if (!dx && (e.shiftKey || H * board.view.scale <= board.view.height)) [dx, dy] = [dy, 0];
+  panBy(-dx, -dy);
+}, { passive: false });
+
+function startPan(e) {
+  commitText();
+  board.pan = { x: e.clientX, y: e.clientY, vx: board.view.x, vy: board.view.y };
+  canvas.setPointerCapture(e.pointerId);
+  canvas.classList.add("panning");
+}
 
 // Draw at most once per screen refresh, however many messages arrive.
 function queueDraw() {
@@ -308,11 +433,37 @@ function drawBoard() {
   ctx.translate(v.x, v.y);
   ctx.scale(v.scale, v.scale);
   drawPaper(ctx);
-  for (const s of board.strokes.values()) if (s.id !== board.hiddenId) drawStroke(ctx, s);
+  for (const s of board.strokes.values()) {
+    if (s.id === board.hiddenId) continue;
+    const m = board.moving.get(s.id);
+    if (!m) { drawStroke(ctx, s); continue; }
+    // Being dragged: draw it shifted, without changing the saved points.
+    ctx.save();
+    ctx.translate(m.dx, m.dy);
+    drawStroke(ctx, s);
+    ctx.restore();
+  }
   for (const s of board.live.values()) drawStroke(ctx, s);
   if (board.mine) drawStroke(ctx, board.mine);
+  drawSelection();
   ctx.restore();
   drawCursors();
+}
+
+// A dashed box around the selected stroke (in board units, drawn the same
+// thickness on screen whatever the zoom).
+function drawSelection() {
+  const s = board.selected !== null && board.strokes.get(board.selected);
+  if (!s) return;
+  const m = board.moving.get(s.id) || { dx: 0, dy: 0 };
+  const b = bounds(s);
+  const pad = 10;
+  ctx.save();
+  ctx.strokeStyle = "#2563eb";
+  ctx.lineWidth = 1.5 / board.view.scale;
+  ctx.setLineDash([6 / board.view.scale, 4 / board.view.scale]);
+  ctx.strokeRect(b.x0 + m.dx - pad, b.y0 + m.dy - pad, b.x1 - b.x0 + 2 * pad, b.y1 - b.y0 + 2 * pad);
+  ctx.restore();
 }
 
 // White paper with a light dot grid.
@@ -472,12 +623,17 @@ function toBoard(e) {
   const v = board.view;
   const x = (e.clientX - rect.left - v.x) / v.scale;
   const y = (e.clientY - rect.top - v.y) / v.scale;
-  return { x: Math.round(Math.min(Math.max(x, 0), W)), y: Math.round(Math.min(Math.max(y, 0), H)), inside: x >= 0 && x <= W && y >= 0 && y <= H };
+  return { x: Math.round(Math.min(Math.max(x, 0), W)), y: Math.round(Math.min(Math.max(y, 0), H)),
+           rx: x, ry: y, inside: x >= 0 && x <= W && y >= 0 && y <= H };
 }
 
 canvas.addEventListener("pointerdown", (e) => {
   if (!board.open || !state.loggedIn) return;
   const p = toBoard(e);
+  // Space + drag, or the middle mouse button: move around, whatever the tool.
+  if (e.button === 1 || spaceHeld) { e.preventDefault(); startPan(e); return; }
+  if (e.button !== 0) return;
+  if (board.tool === "select") { e.preventDefault(); startSelect(e, p); return; }
   if (!p.inside) return;
   e.preventDefault();
   // Clicking the board while a label is being typed keeps that label. (The
@@ -504,8 +660,17 @@ canvas.addEventListener("pointerdown", (e) => {
 
 canvas.addEventListener("pointermove", (e) => {
   if (!board.open) return;
+  if (board.pan) {
+    const v = board.view;
+    v.x = board.pan.vx + e.clientX - board.pan.x;
+    v.y = board.pan.vy + e.clientY - board.pan.y;
+    clampView();
+    queueDraw();
+    return;
+  }
   const p = toBoard(e);
   sendCursor(p);
+  if (board.tool === "select") { dragSelected(p); return; }
   if (board.tool === "eraser" && e.buttons) { eraseAt(p); return; }
   const m = board.mine;
   if (!m) return;
@@ -523,8 +688,18 @@ canvas.addEventListener("pointermove", (e) => {
   queueDraw();
 });
 
-canvas.addEventListener("pointerup", finishMyStroke);
-canvas.addEventListener("pointercancel", finishMyStroke);
+canvas.addEventListener("pointerup", pointerDone);
+canvas.addEventListener("pointercancel", pointerDone);
+
+function pointerDone() {
+  if (board.pan) {
+    board.pan = null;
+    canvas.classList.remove("panning");
+    return;
+  }
+  if (board.drag) { dropSelected(); return; }
+  finishMyStroke();
+}
 
 function finishMyStroke() {
   const m = board.mine;
@@ -575,6 +750,122 @@ function sendCursor(p) {
   lastCursorSent = now;
   sendJSON({ type: "board_cursor", x: p.x, y: p.y });
 }
+
+// --- Select and move ---
+// Click a stroke with the Select tool to pick it, then drag it. Others watch it
+// move (about 20 updates a second); it's saved in its new place when you let
+// go. Delete removes it, Escape lets go of it. Clicking empty space pans.
+
+let moveTimer = null;
+
+// Is this stroke under the point? Lines by their edge; boxes, ovals and the
+// other closed shapes anywhere inside too, so a big shape is easy to grab.
+function strokeAt(p) {
+  for (const s of [...board.strokes.values()].reverse()) {
+    if (touches(s, p)) return s;
+    if (SHAPES.has(s.tool) && s.tool !== "line" && s.tool !== "arrow") {
+      const b = bounds(s);
+      if (p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1) return s;
+    }
+  }
+  return null;
+}
+
+// The box a stroke fills, in board units.
+function bounds(s) {
+  const pts = s.points;
+  if (s.tool === "text") {
+    const width = (s.text || "").length * TEXT_SIZE * 0.58;
+    return { x0: pts[0], y0: pts[1] - TEXT_SIZE * 0.6, x1: pts[0] + width, y1: pts[1] + TEXT_SIZE * 0.6 };
+  }
+  const xs = pts.filter((_, i) => i % 2 === 0), ys = pts.filter((_, i) => i % 2 === 1);
+  return { x0: Math.min(...xs), y0: Math.min(...ys), x1: Math.max(...xs), y1: Math.max(...ys) };
+}
+
+function select(id) {
+  board.selected = id;
+  queueDraw();
+}
+
+function startSelect(e, p) {
+  commitText();
+  const hit = p.inside ? strokeAt(p) : null;
+  if (!hit) {
+    select(null);
+    startPan(e); // empty space: move around instead
+    return;
+  }
+  select(hit.id);
+  canvas.setPointerCapture(e.pointerId);
+  board.drag = { id: hit.id, from: { x: p.rx, y: p.ry }, dx: 0, dy: 0, sent: { dx: 0, dy: 0 } };
+  clearInterval(moveTimer);
+  moveTimer = setInterval(sendMove, SEND_EVERY);
+}
+
+function dragSelected(p) {
+  const d = board.drag;
+  if (!d) {
+    // Not dragging: show a "move" pointer over things that can be picked.
+    canvas.classList.toggle("over-stroke", p.inside && strokeAt(p) !== null);
+    return;
+  }
+  const s = board.strokes.get(d.id);
+  if (!s) return;
+  // Keep the whole stroke on the board (the server checks this again).
+  const b = bounds(s);
+  d.dx = Math.round(Math.min(Math.max(p.rx - d.from.x, -b.x0), W - b.x1));
+  d.dy = Math.round(Math.min(Math.max(p.ry - d.from.y, -b.y0), H - b.y1));
+  board.moving.set(d.id, { dx: d.dx, dy: d.dy, by: state.myId });
+  queueDraw();
+}
+
+// Send where it is now, if it moved since the last time.
+function sendMove(done = false) {
+  const d = board.drag;
+  if (!d || (!done && d.dx === d.sent.dx && d.dy === d.sent.dy)) return;
+  sendJSON({ type: "board_move", stroke: d.id, dx: d.dx, dy: d.dy, done });
+  d.sent = { dx: d.dx, dy: d.dy };
+}
+
+function dropSelected() {
+  clearInterval(moveTimer);
+  const d = board.drag;
+  if (d.dx || d.dy) {
+    sendMove(true); // saved by the server; it stays shown here until the saved copy comes back
+  } else {
+    board.moving.delete(d.id); // just a click: nothing moved
+    if (d.sent.dx || d.sent.dy) sendJSON({ type: "board_move", stroke: d.id, dx: 0, dy: 0, done: true });
+  }
+  board.drag = null;
+  queueDraw();
+}
+
+// Delete / Backspace removes the selected stroke; Escape lets go of it. Space
+// held down lets you drag the board around with any tool.
+document.addEventListener("keydown", (e) => {
+  if (!board.open) return;
+  const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target.isContentEditable;
+  if (typing) return;
+  if (e.key === " " && !spaceHeld && (e.target === document.body || e.target === canvas)) {
+    e.preventDefault(); // don't scroll the page
+    spaceHeld = true;
+    canvas.classList.add("can-pan");
+  }
+  if (board.selected === null || board.drag) return;
+  if (e.key === "Delete" || e.key === "Backspace") {
+    e.preventDefault();
+    sendJSON({ type: "board_erase", stroke: board.selected });
+    select(null);
+  } else if (e.key === "Escape") {
+    select(null);
+  }
+});
+document.addEventListener("keyup", (e) => {
+  if (e.key === " ") {
+    spaceHeld = false;
+    canvas.classList.remove("can-pan");
+  }
+});
 
 // --- Eraser: rub out whole strokes ---
 
@@ -755,6 +1046,11 @@ function closeTextBox() {
 
 // Pick a tool: pen, text, eraser, or a shape (which lights up the Shapes button).
 function selectTool(tool) {
+  if (tool !== "select") select(null);
+  if (tool === "select" && board.tool !== "select") {
+    setNote("Drag something to move it. Delete removes it. Drag empty space to look around.");
+  }
+  canvas.classList.remove("over-stroke");
   board.tool = tool;
   for (const b of panel.querySelectorAll("[data-tool]")) {
     const on = b.dataset.tool === tool || (b.dataset.tool === "shape" && SHAPES.has(tool));
