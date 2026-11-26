@@ -653,7 +653,12 @@ body {
   padding: 8px 12px;
   border-bottom: 1px solid #e6e9ee;
 }
-.tool-sep { width: 1px; height: 22px; background: #e6e9ee; margin: 0 6px; }
+.tool-sep { width: 1px; height: 22px; background: #e6e9ee; margin: 0 4px; }
+/* A little narrower than other icon buttons, so the tools, colours, Undo and
+   Clear fit on one row in the default-width panel */
+.board-tools { gap: 3px; }
+.board-tools .icon-btn { width: 32px; height: 32px; }
+.board-tools .icon-btn.shape-btn { width: 42px; }
 
 /* Shapes button and its menu */
 .shape-picker { position: relative; }
@@ -711,10 +716,43 @@ body {
 .swatch[data-color="red"]   { background: #dc2626; }
 .swatch[data-color="green"] { background: #16a34a; }
 
-/* The canvas fills the space; the page draws a white board inside it */
-/* The board is wider than the side panel: scroll sideways to reach the rest */
-.board-wrap { flex: 1; min-height: 0; position: relative; background: #eef1f5; overflow-x: auto; overflow-y: hidden; }
+/* The canvas fills the space; the page draws the board inside it, zoomed and
+   panned (see board.js), so the space itself never scrolls */
+.board-wrap { flex: 1; min-height: 0; position: relative; background: #eef1f5; overflow: hidden; }
 #board-canvas { position: absolute; left: 0; top: 0; display: block; touch-action: none; cursor: crosshair; }
+/* Select: an arrow, "move" over something you can drag, a hand while panning */
+#board-canvas[data-tool="select"] { cursor: default; }
+#board-canvas[data-tool="select"].over-stroke { cursor: move; }
+#board-canvas.can-pan { cursor: grab; }
+#board-canvas.panning { cursor: grabbing; }
+
+/* − 100% + in the board's bottom-right corner */
+.zoom-ctl {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid #e6e9ee;
+  border-radius: 10px;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.08);
+  overflow: hidden;
+}
+.zoom-ctl button {
+  height: 32px;
+  min-width: 32px;
+  border: none;
+  background: transparent;
+  color: #374151;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.zoom-ctl button:hover { background: #f3f5f8; }
+.zoom-ctl svg { width: 14px; height: 14px; }
+.zoom-ctl .zoom-label { min-width: 52px; font-size: 0.78rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 #board-canvas[data-tool="text"] { cursor: text; }
 #board-canvas[data-tool="eraser"] { cursor: cell; }
 .board-text {
