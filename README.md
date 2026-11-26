@@ -179,7 +179,7 @@ What I learned:
 
 ### Extra: voice huddle on the board
 
-- **Talk while you draw.** Click the headset button at the top of the board, and you're in that conversation's *huddle*. Others in the room or private chat see a green bar: *"alice is talking on the board"* with a **Join** button. Joining opens the board too.
+- **Talk while you draw.** Click **Talk** (the microphone) at the top of the board, and you're in that conversation's *huddle*. Others in the room or private chat see a green bar: *"alice is talking on the board"* with a **Join** button. Joining opens the board too.
 - **While you're in a huddle**, the bar above the message box shows who's in it. A green ring lights up around whoever is speaking, and a crossed-out mic marks anyone muted. **Mute** and **Leave** are there too.
 - **It stays on** when you close the board or switch to another chat, so you can look something up while you talk. You're in one huddle at a time, of up to 5 people.
 - **Leaving is automatic** if you close the tab, log out or lose the connection. You join again with a click, because the page never turns your microphone back on by itself.
