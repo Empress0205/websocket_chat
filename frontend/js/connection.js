@@ -5,6 +5,7 @@ import { state } from "./state.js";
 import { handleMessage } from "./handlers.js";
 import { showLogin } from "./login.js";
 import { setSendEnabled } from "./composer.js";
+import { voiceDisconnected } from "./voice.js";
 
 // Note "ws://" instead of "http://".
 const SERVER_URL = "ws://localhost:8765";
@@ -72,6 +73,7 @@ function onMessage(event) {
 function onClose() {
   stopHeartbeat();
   state.loggedIn = false;
+  voiceDisconnected(); // the server has taken us out of any huddle: hang up here too
   setSendEnabled(false); // nothing can be sent until we're back
   if (state.signedOutText) {
     // We were signed out on purpose: don't reconnect, say so on the login screen.
