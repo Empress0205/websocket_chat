@@ -139,6 +139,11 @@ def init_db(path=DB_PATH):
         _conn.execute("ALTER TABLE messages ADD COLUMN poll_id INTEGER REFERENCES polls (id)")
     if "snapshot_id" not in columns:
         _conn.execute("ALTER TABLE messages ADD COLUMN snapshot_id INTEGER REFERENCES board_snapshots (id)")
+    # A deleted message keeps its row (so its id still works for read receipts
+    # and the order of the chat), but its text is wiped and it shows as
+    # "This message was deleted".
+    if "deleted" not in columns:
+        _conn.execute("ALTER TABLE messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0")
 
     # Everyone shares #general.
     _conn.execute("INSERT OR IGNORE INTO rooms (name, is_public, created_at) VALUES ('general', 1, ?)",
@@ -334,7 +339,7 @@ def unread_counts(user_id, rooms):
     counts = {}
     query = ("SELECT m.room, COUNT(*) AS n FROM messages m "
              "LEFT JOIN reads r ON r.user_id = ? AND r.conv = m.room "
-             "WHERE m.sender_id != ? AND m.id > COALESCE(r.last_read, 0) AND ")
+             "WHERE m.sender_id != ? AND m.deleted = 0 AND m.id > COALESCE(r.last_read, 0) AND ")
     for room in rooms:
         row = _conn.execute(query + "m.room = ? GROUP BY m.room", (int(uid), uid, room)).fetchone()
         if row:
@@ -379,21 +384,48 @@ def get_history(room, before_id=None, limit=HISTORY_LIMIT):
     rows.reverse()  # we fetched newest first; the page wants oldest first
     messages = [
         _to_message(r["id"], r["room"], r["sender_id"], r["sender_name"], r["text"], r["sent_at"],
-                    r["poll_id"], r["snapshot_id"])
+                    r["poll_id"], r["snapshot_id"], r["deleted"])
         for r in rows
     ]
     return messages, more
 
 
-def _to_message(msg_id, room, sender_id, sender_name, text, sent_at, poll_id=None, snapshot_id=None):
+def _to_message(msg_id, room, sender_id, sender_name, text, sent_at, poll_id=None, snapshot_id=None, deleted=0):
     """The same shape as a live "chat" message, so the page treats both alike."""
     msg = {"type": "chat", "msg_id": msg_id, "room": room, "id": sender_id,
            "name": sender_name, "text": text, "sent_at": sent_at}
+    if deleted:
+        msg["deleted"] = True  # the page shows "This message was deleted"
+        return msg
     if poll_id is not None:
         msg["poll"] = get_poll(poll_id)  # the page draws a poll card instead of text
     if snapshot_id is not None:
         msg["board"] = get_snapshot(snapshot_id)  # the page draws the board picture
     return msg
+
+
+def get_message(msg_id):
+    """One message's row (room, sender_id, deleted, ...), or None."""
+    return _conn.execute("SELECT * FROM messages WHERE id = ?", (int(msg_id),)).fetchone()
+
+
+def delete_message(msg_id):
+    """
+    Delete a message for everyone. Its text is wiped, and a poll (with its
+    votes) or a board snapshot that it showed is removed too. The row itself
+    stays as a "This message was deleted" placeholder.
+    """
+    row = get_message(msg_id)
+    if row is None:
+        return
+    _conn.execute("UPDATE messages SET text = '', deleted = 1, poll_id = NULL, snapshot_id = NULL WHERE id = ?",
+                  (row["id"],))
+    if row["poll_id"] is not None:
+        _conn.execute("DELETE FROM poll_votes WHERE poll_id = ?", (row["poll_id"],))
+        _conn.execute("DELETE FROM polls WHERE id = ?", (row["poll_id"],))
+    if row["snapshot_id"] is not None:
+        _conn.execute("DELETE FROM board_snapshots WHERE id = ?", (row["snapshot_id"],))
+    _conn.commit()
 
 
 # --- Drawing board ---

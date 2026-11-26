@@ -113,6 +113,14 @@ function buildRow(msg, prevSenderId) {
 
   const bubble = document.createElement("div");
   bubble.className = "bubble";
+  if (msg.deleted) {
+    row.appendChild(deletedBubble());
+    const time = document.createElement("div");
+    time.className = "time";
+    time.textContent = formatTime(msg.sent_at);
+    row.appendChild(time);
+    return row;
+  }
   if (msg.poll) {
     // A poll: draw its card instead of text (see polls.js).
     bubble.classList.add("poll-bubble");
@@ -137,8 +145,53 @@ function buildRow(msg, prevSenderId) {
     tick.title = "Sent";
     time.appendChild(tick);
   }
+  if (canDelete(msg)) time.appendChild(deleteButton(msg.msg_id));
   row.appendChild(time);
   return row;
+}
+
+// --- Deleting messages ---
+
+const TRASH = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 4.5h11M6 4.5V3a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v1.5M4 4.5l.7 8.6a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9l.7-8.6M6.7 7v4.5M9.3 7v4.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const GONE = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.1 11.9l7.8-7.8" stroke="currentColor" stroke-width="1.4"/></svg>';
+
+// Your own messages, and (for admins) anyone's in a room. The server checks again.
+function canDelete(msg) {
+  if (!msg.msg_id) return false;
+  const inRoom = !String(msg.room || "").startsWith("dm:") && !msg.to;
+  return msg.id === state.myId || (state.isAdmin && inRoom);
+}
+
+function deleteButton(msgId) {
+  const btn = document.createElement("button");
+  btn.className = "delete-btn";
+  btn.title = "Delete for everyone";
+  btn.setAttribute("aria-label", "Delete this message for everyone");
+  btn.innerHTML = TRASH;
+  btn.onclick = () => {
+    if (confirm("Delete this message for everyone? This can't be undone.")) {
+      sendJSON({ type: "delete", msg_id: msgId });
+    }
+  };
+  return btn;
+}
+
+function deletedBubble() {
+  const bubble = document.createElement("div");
+  bubble.className = "bubble deleted";
+  bubble.innerHTML = GONE;
+  bubble.append("This message was deleted");
+  return bubble;
+}
+
+// Someone deleted a message: swap it for the placeholder, wherever it's on screen.
+export function showDeleted(key, msgId) {
+  const c = conversations.get(key);
+  const row = c && c.log.querySelector(`.row[data-msg-id="${Number(msgId)}"]`);
+  if (!row) return; // not loaded here: history will show it as deleted
+  row.querySelector(".bubble").replaceWith(deletedBubble());
+  row.querySelector(".delete-btn")?.remove();
+  row.querySelector(".tick")?.remove();
 }
 
 // A new message arrived: add it at the bottom.
