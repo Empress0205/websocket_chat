@@ -297,8 +297,8 @@ body {
 
 .time { font-size: 0.68rem; color: #9ca3af; margin: 2px 6px 0; display: flex; align-items: center; gap: 4px; }
 
-/* Delete: a small bin next to the time, shown when you point at the message */
-.delete-btn {
+/* React, edit and delete: small buttons next to the time, shown when you point at the message */
+.msg-action {
   width: 20px;
   height: 20px;
   padding: 0;
@@ -312,11 +312,77 @@ body {
   cursor: pointer;
   opacity: 0;
 }
-.delete-btn svg { width: 13px; height: 13px; }
-.row:hover .delete-btn, .delete-btn:focus-visible { opacity: 1; }
+.msg-action svg { width: 13px; height: 13px; }
+.row:hover .msg-action, .msg-action:focus-visible { opacity: 1; }
+.msg-action:hover { color: #2563eb; background: #dbeafe; }
 .delete-btn:hover { color: #dc2626; background: #fee2e2; }
-/* Touch screens can't point: always show it there */
-@media (hover: none) { .delete-btn { opacity: 1; } }
+/* Touch screens can't point: always show them there */
+@media (hover: none) { .msg-action { opacity: 1; } }
+.edited { font-style: italic; }
+
+/* Links in messages */
+.bubble a { color: inherit; text-decoration: underline; text-underline-offset: 2px; word-break: break-all; }
+.theirs .bubble a { color: #1d4ed8; }
+
+/* Editing a message in place */
+.bubble.editing { background: #fff; color: #111827; border: 1px solid #3b82f6; padding: 6px; min-width: 260px; }
+.edit-box {
+  display: block;
+  width: 100%;
+  min-width: 240px;
+  border: none;
+  outline: none;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.35;
+  background: transparent;
+  color: inherit;
+}
+.edit-hint { font-size: 0.7rem; color: #6b7280; margin-top: 4px; white-space: normal; }
+
+/* Reactions under a message, and the menu to pick one */
+.reactions { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 4px 0; }
+.reaction {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid #e6e9ee;
+  border-radius: 12px;
+  background: #fff;
+  font-size: 0.8rem;
+  color: #374151;
+  cursor: pointer;
+}
+.reaction:hover { background: #f3f5f8; }
+.reaction.mine { border-color: #93c5fd; background: #eff6ff; color: #1d4ed8; }
+.react-picker {
+  position: fixed;
+  z-index: 30;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  background: #fff;
+  border: 1px solid #e6e9ee;
+  border-radius: 12px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.12);
+}
+.react-picker[hidden] { display: none; }
+.react-picker button {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 1.15rem;
+  cursor: pointer;
+}
+.react-picker button:hover, .react-picker button:focus-visible { background: #f3f5f8; transform: scale(1.12); }
+
+/* The bell in the header: crossed out when off, blue when on */
+.notify-btn { width: 34px; height: 34px; border-color: #e6e9ee; }
+.notify-btn .icon-bell { display: none; }
+.notify-btn.active { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+.notify-btn.active .icon-bell { display: block; }
+.notify-btn.active .icon-bell-off { display: none; }
 
 /* "This message was deleted" */
 .bubble.deleted,
