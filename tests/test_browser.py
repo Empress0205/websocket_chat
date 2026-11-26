@@ -241,3 +241,132 @@ class BoardInBrowserTests(BrowserTestCase):
         self.assertEqual(await self.bob.text_content("#zoom-reset"), "100%")
         await self.alice.click("#zoom-reset")
         self.assertEqual(await self.alice.text_content("#zoom-reset"), "100%")
+
+
+class QuickWinsInBrowserTests(BrowserTestCase):
+    """Links, editing, reactions and notifications, as people see them."""
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.alice, self.bob = await self.open_page("alice"), await self.open_page("bob")
+
+    async def hover_last(self, page, who="mine"):
+        row = page.locator(f".row.{who}").last
+        await row.hover()
+        return row
+
+    async def test_web_addresses_become_safe_links(self):
+        await self.say(self.alice, "Docs: https://example.com/guide. Also www.test.org and javascript:alert(1)")
+        await self.bob.wait_for_selector("text=Docs:")
+        links = await self.bob.eval_on_selector_all(".row.theirs .bubble a", "els => els.map(a => [a.textContent, a.href, a.target, a.rel])")
+        self.assertEqual(links, [
+            ["https://example.com/guide", "https://example.com/guide", "_blank", "noopener noreferrer"],
+            ["www.test.org", "https://www.test.org/", "_blank", "noopener noreferrer"],
+        ])  # the full stop isn't part of the link, and javascript: is never a link
+
+    async def test_editing_in_place_shows_for_everyone(self):
+        await self.say(self.alice, "Meeting at 3pm")
+        await self.bob.wait_for_selector("text=Meeting at 3pm")
+        row = await self.hover_last(self.alice)
+        await row.locator(".edit-btn").click()
+        await self.alice.fill(".edit-box", "Meeting at 4pm")
+        await self.alice.press(".edit-box", "Enter")
+        await self.bob.wait_for_selector("text=Meeting at 4pm")
+        self.assertEqual(await self.bob.locator(".row.theirs .edited").count(), 1)
+        await self.bob.reload()
+        await self.bob.wait_for_selector("text=Meeting at 4pm")
+        self.assertEqual(await self.bob.locator(".row.theirs .edited").count(), 1, "still marked after a reload")
+
+    async def test_escape_cancels_an_edit(self):
+        await self.say(self.alice, "Keep these words")
+        row = await self.hover_last(self.alice)
+        await row.locator(".edit-btn").click()
+        await self.alice.fill(".edit-box", "Something else")
+        await self.alice.press(".edit-box", "Escape")
+        await self.alice.wait_for_timeout(300)
+        self.assertEqual(await row.locator(".bubble").text_content(), "Keep these words")
+        self.assertEqual(await self.bob.locator(".edited").count(), 0)
+
+    async def test_no_edit_button_on_other_peoples_messages(self):
+        await self.say(self.alice, "from alice")
+        await self.bob.wait_for_selector("text=from alice")
+        self.assertEqual(await self.bob.locator(".row.theirs .edit-btn").count(), 0)
+        self.assertEqual(await self.bob.locator(".row.theirs .react-btn").count(), 1, "anyone can react")
+
+    async def test_reacting_and_taking_it_back(self):
+        await self.say(self.alice, "We won the contract!")
+        await self.bob.wait_for_selector("text=We won the contract!")
+        row = await self.hover_last(self.bob, "theirs")
+        await row.locator(".react-btn").click()
+        await self.bob.click('.react-picker button[aria-label="React with 🎉"]')
+        chip = self.alice.locator(".row.mine .reaction")
+        await chip.wait_for()
+        self.assertEqual(await chip.text_content(), "🎉 1")
+        self.assertEqual(await chip.get_attribute("title"), "bob reacted with 🎉")
+        bobs_chip = self.bob.locator(".row.theirs .reaction.mine")
+        await bobs_chip.wait_for()  # highlighted on Bob's side: it's his
+        await bobs_chip.click()     # take it back
+        await chip.wait_for(state="detached")
+
+    async def test_tab_title_counts_waiting_messages(self):
+        await self.alice.click(".item >> text=bob")  # open a private chat with Bob
+        await self.say(self.alice, "psst")
+        await self.bob.wait_for_function("document.title === '(1) WebSocket Chat'")
+        await self.bob.click(".item >> text=alice")  # reading it clears the count
+        await self.bob.wait_for_function("document.title === 'WebSocket Chat'")
+
+    async def test_bell_gives_a_popup_while_the_tab_is_hidden(self):
+        # Record pop-ups instead of showing them, and pretend the tab is hidden.
+        await self.bob.evaluate("""() => {
+            window.popups = [];
+            window.Notification = class {
+                static permission = "granted";
+                static requestPermission() { return Promise.resolve("granted"); }
+                constructor(title, options) { window.popups.push({ title, body: options.body }); }
+                close() {}
+            };
+        }""")
+        await self.bob.click("#notify-btn")
+        self.assertEqual(await self.bob.get_attribute("#notify-btn", "aria-pressed"), "true")
+        await self.bob.evaluate("""() => {
+            Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "hidden" });
+            document.dispatchEvent(new Event("visibilitychange"));
+        }""")
+        await self.say(self.alice, "Server room door is open")
+        await self.bob.wait_for_function("window.popups.length === 1")
+        self.assertEqual(await self.bob.evaluate("window.popups[0]"),
+                         {"title": "alice in #general", "body": "Server room door is open"})
+        self.assertEqual(await self.bob.title(), "(1) WebSocket Chat")
+        # Back to the tab: the count goes.
+        await self.bob.evaluate("""() => {
+            Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+            document.dispatchEvent(new Event("visibilitychange"));
+        }""")
+        await self.bob.wait_for_function("document.title === 'WebSocket Chat'")
+
+    async def test_no_popup_while_looking_or_with_the_bell_off(self):
+        await self.bob.evaluate("""() => {
+            window.popups = [];
+            window.Notification = class {
+                static permission = "granted";
+                constructor(title) { window.popups.push(title); }
+            };
+        }""")
+        await self.say(self.alice, "one")  # bell off
+        await self.bob.click("#notify-btn")
+        await self.say(self.alice, "two")  # bell on, but Bob is looking at #general
+        await self.bob.wait_for_selector("text=two")
+        self.assertEqual(await self.bob.evaluate("window.popups"), [])
+
+    async def test_bell_turns_on_straight_away_while_the_browser_asks(self):
+        # The browser's "Allow notifications?" question can wait for an answer
+        # for as long as you like: the bell must not look off meanwhile.
+        await self.bob.evaluate("""() => {
+            window.Notification = class {
+                static permission = "default";
+                static requestPermission() { return new Promise(() => {}); }  // never answered
+            };
+        }""")
+        await self.bob.click("#notify-btn")
+        self.assertEqual(await self.bob.get_attribute("#notify-btn", "aria-pressed"), "true")
+        self.assertIn("active", await self.bob.get_attribute("#notify-btn", "class"))
