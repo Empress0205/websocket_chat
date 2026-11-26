@@ -456,6 +456,19 @@ def count_strokes(conv):
     return _conn.execute("SELECT COUNT(*) AS n FROM board_strokes WHERE conv = ?", (conv,)).fetchone()["n"]
 
 
+def get_stroke(conv, stroke_id):
+    """One stroke on this board, or None."""
+    row = _conn.execute("SELECT * FROM board_strokes WHERE conv = ? AND id = ?", (conv, int(stroke_id))).fetchone()
+    return _to_stroke(row) if row else None
+
+
+def move_stroke(conv, stroke_id, points):
+    """Save a stroke's new points after it was dragged somewhere else."""
+    _conn.execute("UPDATE board_strokes SET points = ? WHERE conv = ? AND id = ?",
+                  (json.dumps(points), conv, int(stroke_id)))
+    _conn.commit()
+
+
 def delete_stroke(conv, stroke_id):
     """Rub out one stroke. Returns True if it was there."""
     cur = _conn.execute("DELETE FROM board_strokes WHERE conv = ? AND id = ?", (conv, int(stroke_id)))
