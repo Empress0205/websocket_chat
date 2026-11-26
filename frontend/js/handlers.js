@@ -6,7 +6,7 @@ import { state, conversations } from "./state.js";
 import { sendJSON } from "./connection.js";
 import {
   getConversation, openConversation, renderTitle, addMessage, addInfo,
-  showHistory, updateReceipts,
+  showHistory, updateReceipts, showDeleted,
 } from "./conversations.js";
 import { renderSidebar } from "./sidebar.js";
 import { showLogin, hideLogin } from "./login.js";
@@ -73,6 +73,10 @@ export function handleMessage(msg) {
     case "board_activity":
       // Someone is drawing on this conversation's board and ours is closed.
       return showBoardActivity(msg);
+
+    case "deleted":
+      // A message was deleted for everyone (by its sender, or an admin).
+      return showDeleted(msg.key, msg.msg_id);
 
     case "poll_update":
       // Someone voted or the poll was closed: redraw it with the new totals.
