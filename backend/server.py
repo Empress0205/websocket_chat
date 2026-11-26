@@ -641,7 +641,7 @@ async def handle_board(ws, msg):
     conv = me["board"]
     if conv is None:
         return  # no board open: nothing to draw on
-    if kind in ("board_draw", "board_cursor") and not me["board_limit"].allow():
+    if kind in ("board_draw", "board_cursor", "board_move") and not me["board_limit"].allow():
         return  # far too fast: drop it quietly
 
     if kind == "board_cursor":
@@ -707,6 +707,25 @@ async def handle_board(ws, msg):
 
     elif not polls.can_use(me["id"], conv):
         await leave_board(ws)  # access was taken away: close the board
+
+    elif kind == "board_move":
+        # Dragging a stroke with the Select tool. While it's dragged, others
+        # watch it move (not saved); when it's dropped ("done"), it's saved in
+        # its new place and everyone swaps their preview for the saved stroke.
+        stroke_id = msg.get("stroke")
+        offset = board.clean_offset(msg.get("dx"), msg.get("dy"))
+        if isinstance(stroke_id, bool) or not isinstance(stroke_id, int) or offset is None:
+            return
+        if not msg.get("done"):
+            await send_to_board(conv, {"type": "board_moving", "id": me["id"], "stroke": stroke_id,
+                                       "dx": offset[0], "dy": offset[1]}, exclude=ws)
+            return
+        stroke = db.get_stroke(conv, stroke_id)
+        if stroke is not None:
+            stroke["points"] = board.move_points(stroke["points"], *offset)
+            db.move_stroke(conv, stroke_id, stroke["points"])
+        # Sent even if it was erased meanwhile (stroke is None), so everyone drops the preview.
+        await send_to_board(conv, {"type": "board_moved", "id": me["id"], "stroke_id": stroke_id, "stroke": stroke})
 
     elif kind == "board_erase":
         stroke_id = msg.get("stroke")
@@ -833,7 +852,7 @@ async def handle_voice(ws, msg):
 
 # Messages that arrive many times a second, or are large and unreadable (an
 # offer is ~3,000 characters of SDP): never print them (see the stress test).
-QUIET = ("ping", "board_draw", "board_cursor", "voice_offer", "voice_answer", "voice_ice")
+QUIET = ("ping", "board_draw", "board_cursor", "board_move", "voice_offer", "voice_answer", "voice_ice")
 
 
 async def handler(ws):
