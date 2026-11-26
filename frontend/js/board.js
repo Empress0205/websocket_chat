@@ -70,7 +70,7 @@ export function toggleBoard() {
 }
 
 export function openBoard() {
-  if (!state.activeKey || !state.loggedIn) return;
+  if (board.open || !state.activeKey || !state.loggedIn) return;
   hideBanner();
   board.open = true;
   panel.classList.remove("hidden");
