@@ -149,6 +149,20 @@ Before a real launch, I reviewed the code for what would have to change. This is
 - **More room:** the « button at the top of the sidebar folds it into a thin strip down the left edge; » opens it again. Your choice is remembered in this browser.
 - **Nothing missed:** while the sidebar is folded, the » button shows a red badge with how many unread messages are waiting.
 
+### Extra: edit, react, links and notifications
+
+- **Edit your own messages:** point at one and click the pencil. The words turn into a box right in the bubble: **Enter** saves, **Shift+Enter** adds a line, **Esc** cancels. Everyone sees the new words straight away, marked *(edited)*. Only text messages can be edited (not polls or board snapshots), and admins can't change other people's words: they can only delete them.
+- **React** with 👍 ❤️ 😂 😮 🎉: point at any message, click the smiley and pick one. Chips like "🎉 2" appear under it for everyone; yours are highlighted, and clicking a chip adds or takes back yours. Point at a chip to see who reacted.
+- **Links:** web addresses (`https://…`, `http://…` or `www.…`) are clickable and open in a new tab. A full stop or bracket at the end of a sentence isn't taken as part of the link, and anything that isn't a web address (like `javascript:`) is never made clickable.
+- **Never miss a message:** the tab's title shows how many are waiting, like *"(3) WebSocket Chat"*. Click the **bell** at the top to also get a soft sound and a pop-up when a message arrives while you're in another tab or window. The browser asks once whether to allow pop-ups; without them you still get the sound. Clicking a pop-up opens that conversation.
+
+What I learned:
+
+- **The server is the source of truth, again:** editing and reacting are new message types (`edit`, `react`), and the server checks every one (whose message, which emoji, can you see it) before telling everyone who can see the conversation. A reaction is a row in a `reactions` table whose key is *(message, person, emoji)*, so nobody can add the same reaction twice, like one vote per poll.
+- **Links without HTML:** the message is split into plain text and web addresses, and each piece is added as text or as a link element. The message is never treated as HTML, so nobody can sneak a script into the chat. Links open with `rel="noopener noreferrer"`, so the other site can't reach back into the chat page.
+- **A sound with no sound file:** the "ding" is two short notes made with the Web Audio API. Browsers only allow sound after a click, which is why the bell starts off.
+- **A bug the tests found by accident:** while checking reactions, every emoji was being thrown away. The server prints what it receives; when its output goes to a pipe or a log file on Windows, Python uses an old character set with no emoji, printing 🎉 raised an error, and the server's "ignore bad messages" safety net caught that error and dropped the message. This was true for any chat message with an emoji, all along. The server now prints a code (like `🎉`) for characters it can't show, and a test switches printing back on to make sure emoji are never lost again.
+
 ### Extra: delete a message
 
 - **Point at one of your messages** and click the small bin next to its time. After you confirm, it's deleted for everyone, straight away.
@@ -282,6 +296,7 @@ The project is split into a **backend** (the Python server) and a **frontend** (
 │   ├── test_core.py       # Logging in, rooms, private messages, the rate limit
 │   ├── test_voice.py      # Voice huddles: who's in them, and the signalling relay
 │   ├── test_delete.py     # Deleting messages: who may, and who is told
+│   ├── test_edit_react.py # Editing messages and reacting to them
 │   ├── test_board.py      # The board: drawing, erasing, moving
 │   └── test_browser.py    # Two people in real Chrome windows, using the actual page
 ├── tools/
@@ -302,7 +317,8 @@ The project is split into a **backend** (the Python server) and a **frontend** (
         ├── composer.js        # The message box, Send button and /poll command
         ├── polls.js           # Poll cards and voting
         ├── board.js           # The shared drawing board in the side panel
-        └── voice.js           # Voice huddles on the board (WebRTC)
+        ├── voice.js           # Voice huddles on the board (WebRTC)
+        └── notify.js          # "(3)" in the tab title, and the bell: sound and pop-ups
 ```
 
 The JavaScript files are **ES modules**: each one says what it `export`s, and what it `import`s from the others, so it's clear how they depend on each other.
@@ -382,6 +398,10 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Server → room / 1 person | `seen` | Someone read up to `msg_id`: `{ "room", "id", "name", "msg_id" }` in a room, or `{ "with": "<reader id>", "msg_id" }` in a private chat |
 | Server → client | `unread` | After logging in: messages waiting per conversation, e.g. `{ "counts": { "room:general": 3, "dm:5": 1 } }` |
 | Client → server | `delete` | Delete a message for everyone: `{ "type": "delete", "msg_id": 42 }`. Your own, or (admins) anyone's in a room |
+| Client → server | `edit` | Change the words of your own text message: `{ "type": "edit", "msg_id": 42, "text": "..." }` |
+| Server → client | `edited` | A message's new words: `{ "key", "msg_id", "text" }`, to everyone who can see that conversation. In `history`, an edited message comes with `"edited": true` |
+| Client → server | `react` | Add a reaction, or take yours back: `{ "type": "react", "msg_id": 42, "emoji": "👍" }`. One of 👍 ❤️ 😂 😮 🎉 |
+| Server → client | `reactions` | All of a message's reactions now: `{ "key", "msg_id", "reactions": [{ "emoji", "users": [{ id, name }] }] }`. In `history`, messages with reactions have the same `reactions` field |
 | Server → client | `deleted` | A message was deleted: `{ "key": "room:general" or "dm:<id>", "msg_id" }`. Sent to everyone who can see that conversation. In `history`, a deleted message comes with `"deleted": true` and no text |
 | Client → server | `dm_history` | Opened a private chat: `{ "type": "dm_history", "with": "<user id>" }` |
 | Client → server | `typing` | "I'm typing", at most once per second. Add `"to": "<id>"` when typing in a private chat |
@@ -435,10 +455,10 @@ From the project folder:
 python -m unittest discover -s tests
 ```
 
-That runs 51 tests in about a minute, using only Python's built-in `unittest`. Each test starts its own server on a free port with a brand-new database in a temporary folder, so your real server and `chat.db` are never touched, and no test can affect another.
+That runs 76 tests in about a minute and a half, using only Python's built-in `unittest`. Each test starts its own server on a free port with a brand-new database in a temporary folder, so your real server and `chat.db` are never touched, and no test can affect another.
 
-- **Server tests (42, about 30 seconds):** scripted users log in and send messages, and the tests check what the server sends back. For example: a huddle refuses a sixth person, nobody can pretend to be someone else in the WebRTC handshake, a deleted message's text is really gone from the database, an admin can't delete inside other people's private chats, and a dragged shape stops at the board's edge without changing shape.
-- **Browser tests (9, about 30 seconds):** two people in real Chrome windows use the actual page. Alice starts a huddle and Bob joins; Chrome's fake microphone plays a beep, and the test waits for each person's speaking ring to light up, which proves the audio really travels browser to browser. Others check that a deleted message turns into the placeholder (live and after a reload), and that drawing still lands in the right place when zoomed in. They need [Playwright](https://playwright.dev/python/) (`pip install playwright`) and Chrome; without them they're skipped.
+- **Server tests (58, about 35 seconds):** scripted users log in and send messages, and the tests check what the server sends back. For example: a huddle refuses a sixth person, nobody can pretend to be someone else in the WebRTC handshake, a deleted message's text is really gone from the database, an admin can't delete inside other people's private chats, and a dragged shape stops at the board's edge without changing shape.
+- **Browser tests (18, about 55 seconds):** two people in real Chrome windows use the actual page. Alice starts a huddle and Bob joins; Chrome's fake microphone plays a beep, and the test waits for each person's speaking ring to light up, which proves the audio really travels browser to browser. Others check that a deleted message turns into the placeholder (live and after a reload), that drawing still lands in the right place when zoomed in, that `javascript:` is never made a link, and that a pop-up appears only while the tab is hidden (the test swaps the browser's pop-ups for a recorder and pretends the tab is hidden). They need [Playwright](https://playwright.dev/python/) (`pip install playwright`) and Chrome; without them they're skipped.
 
 For a quick run without the browser tests: `set SKIP_BROWSER=1` (PowerShell: `$env:SKIP_BROWSER=1`), then run the same command. To see what the server prints while a test runs, set `SERVER_LOG=1` the same way.
 
