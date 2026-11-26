@@ -1,5 +1,5 @@
 """The basics everything else relies on: logging in, rooms, private messages, limits."""
-from helpers import Client, ServerTestCase, db
+from helpers import Client, ServerTestCase, db, server
 
 
 class LoginTests(ServerTestCase):
@@ -67,3 +67,37 @@ class RateLimitTests(ServerTestCase):
             await alice.send(type="chat", text=f"spam {i}")
         error = await alice.wait("error")
         self.assertIn("too fast", error["text"])
+
+
+class EmojiOutputTests(ServerTestCase):
+    """
+    The server prints what it receives. On Windows, when that output goes to a
+    pipe or a log file, it can't show emoji, and the printing error once made
+    the server throw away any message with an emoji in it. The other tests
+    switch printing off, so this one switches it back on, with a character set
+    that has no emoji, to make sure that can't happen again.
+    """
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        import builtins
+        import io
+        import sys
+        self.real_stdout = sys.stdout
+        sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")  # like a pipe on Windows
+        server.print = builtins.print
+        server.make_output_safe()  # what main() does when the server starts
+
+    async def asyncTearDown(self):
+        import sys
+        server.print = lambda *args, **kwargs: None
+        sys.stdout = self.real_stdout
+        await super().asyncTearDown()
+
+    async def test_messages_with_emoji_are_not_lost(self):
+        alice, bob = await self.login("alice"), await self.login("bob")
+        await alice.send(type="chat", text="We won the contract 🎉")
+        await bob.wait("chat", text="We won the contract 🎉")
+        msg = await alice.wait("chat")
+        await bob.send(type="react", msg_id=msg["msg_id"], emoji="👍")
+        await alice.wait("reactions")
