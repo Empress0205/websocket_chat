@@ -746,7 +746,7 @@ body {
 .banner-close svg { width: 14px; height: 14px; }
 .banner-close:hover { background: #dbeafe; }
 
-/* Voice huddle: the bar above the message box, and the headset button on the board */
+/* Voice huddle: the bar above the message box, and the Talk button on the board */
 .voice-bar {
   display: flex;
   align-items: center;
@@ -802,10 +802,27 @@ body {
 .voice-ctl.active .icon-mic-off { display: block; }
 .voice-bar .banner-close { color: #14532d; }
 .voice-bar .banner-close:hover { background: #dcfce7; }
-/* The headset on the board: green while you're in its huddle, a dot when others are talking */
-.icon-btn.voice-btn { position: relative; }
-.icon-btn.voice-btn.active { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
-.icon-btn.voice-btn.live::after {
+/* "Talk" on the board: green while you're in its huddle, a dot when others are talking */
+.voice-btn {
+  position: relative;
+  height: 36px;
+  padding: 0 12px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #e6e9ee;
+  border-radius: 8px;
+  background: transparent;
+  color: #374151;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.voice-btn svg { width: 16px; height: 16px; }
+.voice-btn:hover { background: #f3f5f8; }
+.voice-btn.active { background: #dcfce7; color: #15803d; border-color: #bbf7d0; }
+.voice-btn.live::after {
   content: "";
   position: absolute;
   top: 5px;
