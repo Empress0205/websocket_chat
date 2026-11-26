@@ -174,7 +174,9 @@ What I learned: the **server is the vote counter**. The page only says "I vote f
 - **Tools:** pen, text labels (others watch the words appear as you type; click a label with the Text tool to change its words, or clear them to remove it), an eraser (it rubs out a whole line or shape) and a **Shapes** menu, in black, blue, red or green. *Undo* removes your own last line; *Clear* wipes the board for everyone.
 - **Shapes:** line, arrow, rectangle, ellipse, diamond, triangle, cloud and cylinder, enough for a quick network sketch or flowchart (a cloud for the internet, a cylinder for a database or server). Drag to draw; hold **Shift** for a perfect square or circle, or a line at 45°. Others watch the shape stretch as you drag it.
 - **Saved with the conversation.** Close the board or reload the page, and the drawing is still there.
-- **A wide board:** the page is landscape. In the side panel, scroll sideways for more room; drag the panel's left edge to make it wider (the width is remembered; double-click the edge to reset), or click **Expand** to give the board the main space with the chat docked on the right, where it shows nearly all of it. Everyone still sees the same drawing, just drawn larger or smaller.
+- **Select and move:** pick the arrow tool, click a line, shape or label (a dashed box shows it's selected) and drag it somewhere else. Others watch it move, and it's saved when you let go. Press **Delete** to remove it, or **Esc** to let go of it.
+- **Zoom and pan:** **Ctrl + scroll** (or pinch on a touchpad) zooms toward the pointer, from the whole board up to 400%; the **− 100% +** buttons in the corner do the same, and clicking the percentage goes back to 100%. To move around: scroll, drag empty space with the arrow tool, hold **Space** and drag, or drag with the middle mouse button. Zoom is only on your screen, so everyone can look at a different part.
+- **A wide board:** the page is landscape. In the side panel, pan sideways for more room; drag the panel's left edge to make it wider (the width is remembered; double-click the edge to reset), or click **Expand** to give the board the main space with the chat docked on the right, where it shows nearly all of it. Everyone still sees the same drawing, just drawn larger or smaller.
 - **Post snapshot to chat** puts a picture of the board into the conversation, frozen as it was, so the chat keeps a record (handy after sketching a network problem).
 
 What I learned:
@@ -183,6 +185,8 @@ What I learned:
 - **Board units:** every screen is a different size, so points are sent on a fixed 2000 x 1250 board and each page scales it to the height of its space (scrolling sideways if the space is narrow). A line in the middle lands in the middle everywhere.
 - **Live vs saved:** batches are passed on straight away but not saved; the finished line is saved once, when the pen lifts. Everyone then swaps their live copy for the saved one.
 - **Two kinds of update:** a pen line grows, so each batch *adds* points. A shape is only ever two points (where the drag started and where it is now), so each batch *replaces* the shape. Every shape is drawn from those two points, which is why adding a new one is just a few lines of drawing code.
+- **Moving is "preview, then save" too:** while a stroke is dragged, only the offset (`dx`, `dy`) is sent and others draw the saved stroke shifted by it. When it's dropped, the server adds the offset to every point once and saves it. The stroke moves as one piece and stops at the board's edge, so its shape never changes.
+- **Zoom without a giant canvas:** the canvas stays the size of the panel, and the board is drawn into it with a scale and an offset (`screen = board × scale + offset`). Zooming toward the pointer means picking the new offset so the board point under the mouse stays under it. A canvas as big as a 400% board would need hundreds of megabytes.
 - **Not everything is logged:** drawing and pointer messages are never printed by the server, after the stress test showed what logging every message costs.
 
 ### Extra: voice huddle on the board
@@ -393,6 +397,8 @@ Every connection starts logged out. Once it logs in, the server keeps that perso
 | Server → board | `board_draw` / `board_saved` | A batch of someone's live line (`"replace": true` for a shape, meaning "this is the whole shape now"), then the saved line (with its `id`) that replaces it |
 | Client → server | `board_erase` / `board_undo` / `board_clear` | Rub out one line (`"stroke": <id>`), remove my last line, or wipe the board |
 | Server → board | `board_removed` / `board_cleared` | Lines gone (`"ids"`), or the board wiped (`"by"` who) |
+| Client → server | `board_move` | Dragging a stroke: `{ "stroke": <id>, "dx", "dy", "done" }`, the offset from where it was, in board units, about 20 times a second. `"done": true` saves it there |
+| Server → board | `board_moving` / `board_moved` | Someone's drag as it happens (`"id"` who, `"stroke"`, `"dx"`, `"dy"`), then the saved stroke in its new place (`"stroke_id"`, `"stroke"`; `null` if it was erased meanwhile) |
 | Client ↔ server | `board_cursor` | Where someone's pointer is, about 12 times a second: `{ "x", "y" }`, passed on with their `id` and `name` |
 | Server → board | `board_viewers` | Who has the board open: `[{ "id", "name" }]` |
 | Server → client | `board_activity` | Someone started drawing on the board of a conversation you're in, and yours is closed: `{ "key", "id", "name" }`. At most once every 20 seconds per person drawing |
