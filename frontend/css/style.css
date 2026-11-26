@@ -295,7 +295,43 @@ body {
 .theirs .bubble { background: #fff; color: #111827; border: 1px solid #e6e9ee; border-bottom-left-radius: 4px; }
 .dm-log .mine .bubble { background: #7c3aed; }
 
-.time { font-size: 0.68rem; color: #9ca3af; margin: 2px 6px 0; }
+.time { font-size: 0.68rem; color: #9ca3af; margin: 2px 6px 0; display: flex; align-items: center; gap: 4px; }
+
+/* Delete: a small bin next to the time, shown when you point at the message */
+.delete-btn {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+}
+.delete-btn svg { width: 13px; height: 13px; }
+.row:hover .delete-btn, .delete-btn:focus-visible { opacity: 1; }
+.delete-btn:hover { color: #dc2626; background: #fee2e2; }
+/* Touch screens can't point: always show it there */
+@media (hover: none) { .delete-btn { opacity: 1; } }
+
+/* "This message was deleted" */
+.bubble.deleted,
+.mine .bubble.deleted,
+.dm-log .mine .bubble.deleted {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  color: #9ca3af;
+  border: 1px dashed #d1d5db;
+  font-style: italic;
+  font-size: 0.85rem;
+}
+.bubble.deleted svg { width: 13px; height: 13px; flex-shrink: 0; }
 
 /* "Someone joined" notices */
 .info {
