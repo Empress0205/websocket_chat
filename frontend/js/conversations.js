@@ -9,6 +9,7 @@ import { focusInput } from "./composer.js";
 import { buildPollCard } from "./polls.js";
 import { boardFollow, buildSnapshotCard } from "./board.js";
 import { voiceFollow } from "./voice.js";
+import { noteIncoming } from "./notify.js";
 
 const logs = document.getElementById("logs");
 const titleEl = document.getElementById("title");
@@ -130,9 +131,16 @@ function buildRow(msg, prevSenderId) {
     bubble.classList.add("poll-bubble");
     bubble.appendChild(buildSnapshotCard(msg.board));
   } else {
-    bubble.textContent = msg.text; // textContent (not innerHTML) so nobody can inject HTML
+    setText(bubble, msg.text);
   }
+  row.text = msg.text; // kept for editing
   row.appendChild(bubble);
+
+  // Reactions under the bubble ("👍 2"), if there are any.
+  const reactions = document.createElement("div");
+  reactions.className = "reactions";
+  renderReactions(reactions, msg.msg_id, msg.reactions || []);
+  row.appendChild(reactions);
 
   const time = document.createElement("div");
   time.className = "time";
@@ -145,9 +153,205 @@ function buildRow(msg, prevSenderId) {
     tick.title = "Sent";
     time.appendChild(tick);
   }
+  if (msg.edited) time.appendChild(editedLabel());
+  // React, edit and delete: small buttons that show when you point at the message.
+  if (msg.msg_id) time.appendChild(reactButton(msg.msg_id));
+  if (canEdit(msg)) time.appendChild(editButton(row, msg.msg_id));
   if (canDelete(msg)) time.appendChild(deleteButton(msg.msg_id));
   row.appendChild(time);
   return row;
+}
+
+// --- Clickable links ---
+
+// Web addresses: http://, https:// or www. Anything else (like "javascript:")
+// is never turned into a link, so a message can't run code when clicked.
+const URL_PATTERN = /\b(?:https?:\/\/|www\.)[^\s<>"']+/gi;
+
+// Put a message's text in an element, with its web addresses as links. Every
+// piece goes in as text (never as HTML), so nobody can inject HTML.
+function setText(el, text) {
+  el.textContent = "";
+  let last = 0;
+  for (const match of text.matchAll(URL_PATTERN)) {
+    // Punctuation at the end is usually the sentence's, not the address's:
+    // "see https://example.com." links to https://example.com.
+    let url = match[0].replace(/[.,;:!?'"]+$/, "");
+    if (url.endsWith(")") && !url.includes("(")) url = url.slice(0, -1);
+    const href = url.startsWith("www.") ? "https://" + url : url;
+    let safe = false;
+    try { safe = ["http:", "https:"].includes(new URL(href).protocol); } catch { /* not a real address */ }
+    if (!safe) continue;
+    el.append(text.slice(last, match.index));
+    const a = document.createElement("a");
+    a.href = href;
+    a.textContent = url;
+    a.target = "_blank";             // a new tab, so the chat stays open
+    a.rel = "noopener noreferrer";   // and the other site can't reach back into this page
+    el.append(a);
+    last = match.index + url.length;
+  }
+  el.append(text.slice(last));
+}
+
+// --- Editing your own messages ---
+
+const PENCIL = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5l.8-3 7.5-7.5 2.2 2.2-7.5 7.5zM9.5 4.3l2.2 2.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>';
+
+// Only your own text messages (not polls or board snapshots). The server checks again.
+function canEdit(msg) {
+  return Boolean(msg.msg_id) && msg.id === state.myId && !msg.poll && !msg.board;
+}
+
+function editedLabel() {
+  const label = document.createElement("span");
+  label.className = "edited";
+  label.textContent = "(edited)";
+  return label;
+}
+
+function editButton(row, msgId) {
+  const btn = actionButton("edit-btn", "Edit", PENCIL);
+  btn.onclick = () => startEdit(row, msgId);
+  return btn;
+}
+
+// The bubble turns into a text box. Enter saves, Shift+Enter adds a line, Esc cancels.
+function startEdit(row, msgId) {
+  const bubble = row.querySelector(".bubble");
+  if (bubble.classList.contains("editing")) return;
+  const box = document.createElement("textarea");
+  box.className = "edit-box";
+  box.value = row.text;
+  box.maxLength = 2000;
+  box.rows = Math.min(6, row.text.split("\n").length + 1);
+  const hint = document.createElement("div");
+  hint.className = "edit-hint";
+  hint.textContent = "Enter to save · Esc to cancel";
+  bubble.classList.add("editing");
+  bubble.replaceChildren(box, hint);
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+
+  const stop = () => {
+    bubble.classList.remove("editing");
+    setText(bubble, row.text); // the server's "edited" message brings the new words
+  };
+  box.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      stop();
+    } else if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      const text = box.value.trim();
+      if (!text) {
+        hint.textContent = "A message can't be empty. To remove it, delete it.";
+        return;
+      }
+      if (text !== row.text) sendJSON({ type: "edit", msg_id: msgId, text });
+      stop();
+    }
+  });
+}
+
+// Someone edited a message: show the new words, and "(edited)".
+export function showEdited(key, msgId, text) {
+  const row = findRow(key, msgId);
+  if (!row) return; // not loaded here: history will have the new words
+  row.text = text;
+  const bubble = row.querySelector(".bubble");
+  if (!bubble.classList.contains("editing")) setText(bubble, text);
+  const time = row.querySelector(".time");
+  if (!time.querySelector(".edited")) time.querySelector(".msg-action")?.before(editedLabel());
+}
+
+// --- Reactions ---
+
+const REACTIONS = ["👍", "❤️", "😂", "😮", "🎉"]; // the same as REACTIONS in backend/server.py
+const SMILEY = '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.8" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M5.6 9.4c.6.9 1.4 1.3 2.4 1.3s1.8-.4 2.4-1.3" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/><circle cx="6.1" cy="6.6" r=".8" fill="currentColor"/><circle cx="9.9" cy="6.6" r=".8" fill="currentColor"/></svg>';
+
+// The chips under a message: "👍 2". Yours are highlighted; click one to add or take back yours.
+function renderReactions(el, msgId, reactions) {
+  el.textContent = "";
+  for (const r of reactions) {
+    const chip = document.createElement("button");
+    const names = r.users.map(u => (u.id === state.myId ? "You" : u.name));
+    chip.className = "reaction" + (r.users.some(u => u.id === state.myId) ? " mine" : "");
+    chip.textContent = `${r.emoji} ${r.users.length}`;
+    chip.title = `${names.join(", ")} reacted with ${r.emoji}`;
+    chip.onclick = () => sendJSON({ type: "react", msg_id: msgId, emoji: r.emoji });
+    el.appendChild(chip);
+  }
+  el.hidden = reactions.length === 0;
+}
+
+// Someone reacted (or took a reaction back): redraw that message's chips.
+export function showReactions(key, msgId, reactions) {
+  const row = findRow(key, msgId);
+  if (row) renderReactions(row.querySelector(".reactions"), msgId, reactions);
+}
+
+function reactButton(msgId) {
+  const btn = actionButton("react-btn", "Add a reaction", SMILEY);
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    openPicker(btn, msgId);
+  };
+  return btn;
+}
+
+// One small menu of reactions, shown next to whichever message asked for it.
+const picker = document.createElement("div");
+picker.className = "react-picker";
+picker.hidden = true;
+picker.setAttribute("role", "menu");
+document.body.appendChild(picker);
+let pickerFor = null;
+
+for (const emoji of REACTIONS) {
+  const b = document.createElement("button");
+  b.textContent = emoji;
+  b.setAttribute("role", "menuitem");
+  b.setAttribute("aria-label", "React with " + emoji);
+  b.onclick = () => {
+    sendJSON({ type: "react", msg_id: pickerFor, emoji });
+    closePicker();
+  };
+  picker.appendChild(b);
+}
+
+function openPicker(button, msgId) {
+  pickerFor = msgId;
+  picker.hidden = false;
+  const r = button.getBoundingClientRect();
+  const width = picker.offsetWidth;
+  picker.style.left = Math.max(8, Math.min(r.left - width / 2, window.innerWidth - width - 8)) + "px";
+  picker.style.top = Math.max(8, r.top - picker.offsetHeight - 6) + "px"; // just above the button
+  picker.querySelector("button").focus();
+}
+
+function closePicker() {
+  picker.hidden = true;
+  pickerFor = null;
+}
+
+document.addEventListener("click", (e) => { if (!picker.contains(e.target)) closePicker(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePicker(); });
+document.addEventListener("scroll", closePicker, true); // it would float away from its message
+
+// --- Shared by edit, delete and react ---
+
+function findRow(key, msgId) {
+  const c = conversations.get(key);
+  return c ? c.log.querySelector(`.row[data-msg-id="${Number(msgId)}"]`) : null;
+}
+
+function actionButton(className, label, icon) {
+  const btn = document.createElement("button");
+  btn.className = "msg-action " + className;
+  btn.title = label;
+  btn.setAttribute("aria-label", label);
+  btn.innerHTML = icon;
+  return btn;
 }
 
 // --- Deleting messages ---
@@ -163,11 +367,7 @@ function canDelete(msg) {
 }
 
 function deleteButton(msgId) {
-  const btn = document.createElement("button");
-  btn.className = "delete-btn";
-  btn.title = "Delete for everyone";
-  btn.setAttribute("aria-label", "Delete this message for everyone");
-  btn.innerHTML = TRASH;
+  const btn = actionButton("delete-btn", "Delete for everyone", TRASH);
   btn.onclick = () => {
     if (confirm("Delete this message for everyone? This can't be undone.")) {
       sendJSON({ type: "delete", msg_id: msgId });
@@ -186,12 +386,12 @@ function deletedBubble() {
 
 // Someone deleted a message: swap it for the placeholder, wherever it's on screen.
 export function showDeleted(key, msgId) {
-  const c = conversations.get(key);
-  const row = c && c.log.querySelector(`.row[data-msg-id="${Number(msgId)}"]`);
+  const row = findRow(key, msgId);
   if (!row) return; // not loaded here: history will show it as deleted
   row.querySelector(".bubble").replaceWith(deletedBubble());
-  row.querySelector(".delete-btn")?.remove();
-  row.querySelector(".tick")?.remove();
+  // Nothing left to react to, edit or delete.
+  for (const el of row.querySelectorAll(".msg-action, .tick, .edited, .reactions")) el.remove();
+  if (pickerFor === Number(msgId)) closePicker();
 }
 
 // A new message arrived: add it at the bottom.
@@ -205,6 +405,7 @@ export function addMessage(key, msg) {
   updateReceipts(key);
   markRead(key);
   markUnread(key);
+  if (msg.id !== state.myId) noteIncoming(key, msg, openConversation); // title, sound, pop-up
 }
 
 export function addInfo(key, text, isError = false) {
