@@ -113,6 +113,9 @@
       </div>
 
       <div class="board-tools">
+        <button class="icon-btn tool" data-tool="select" aria-label="Select and move" aria-pressed="false" title="Select and move">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.5 2.5l9 5-4 1.2-2 3.8z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+        </button>
         <button class="icon-btn tool active" data-tool="pen" aria-label="Pen" aria-pressed="true">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 13.5l1-3.5 7.5-7.5 2.5 2.5-7.5 7.5z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
         </button>
@@ -154,6 +157,16 @@
 
       <div id="board-wrap" class="board-wrap">
         <canvas id="board-canvas" aria-label="Drawing board. Draw with the mouse, a pen or a finger."></canvas>
+        <!-- Zoom: only changes your view. Ctrl + scroll (or pinch) zooms toward the pointer. -->
+        <div class="zoom-ctl" role="group" aria-label="Zoom">
+          <button id="zoom-out" aria-label="Zoom out" title="Zoom out (Ctrl + scroll)">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 8h8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+          <button id="zoom-reset" class="zoom-label" title="Back to 100%">100%</button>
+          <button id="zoom-in" aria-label="Zoom in" title="Zoom in (Ctrl + scroll)">
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 8h8M8 4v8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+        </div>
       </div>
 
       <div class="panel-foot">
