@@ -10,9 +10,9 @@ points or draw off the board by sending messages by hand.
 WIDTH = 2000
 HEIGHT = 1250
 # Goes up when the board changes in a way an older page or server can't
-# handle (2: text labels are sent live while they're typed). The page checks
-# it, with the size, to warn when the server needs restarting.
-VERSION = 2
+# handle (2: text labels are sent live while they're typed; 3: strokes can be
+# moved). The page checks it, with the size, to warn when the server needs restarting.
+VERSION = 3
 
 COLORS = ("black", "blue", "red", "green")
 # Shapes are drawn between two points: where the drag started and where it is
@@ -72,6 +72,27 @@ def is_complete(stroke):
     if stroke["tool"] == "text":
         return len(points) >= 2 and bool(stroke["text"])
     return len(points) >= 2
+
+
+def clean_offset(dx, dy):
+    """How far a stroke is being dragged, in board units. None if it's not two whole numbers on the board."""
+    if any(isinstance(v, bool) or not isinstance(v, int) for v in (dx, dy)):
+        return None
+    if abs(dx) > WIDTH or abs(dy) > HEIGHT:
+        return None
+    return dx, dy
+
+
+def move_points(points, dx, dy):
+    """
+    Shift every point of a stroke by (dx, dy). The stroke moves as one piece:
+    if it would go past an edge, it stops at that edge instead (no point is
+    squashed against the side, so its shape never changes).
+    """
+    xs, ys = points[0::2], points[1::2]
+    dx = max(-min(xs), min(dx, WIDTH - max(xs)))
+    dy = max(-min(ys), min(dy, HEIGHT - max(ys)))
+    return [v + (dx if i % 2 == 0 else dy) for i, v in enumerate(points)]
 
 
 def clean_cursor(x, y):
