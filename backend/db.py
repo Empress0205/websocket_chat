@@ -547,7 +547,25 @@ def delete_last_stroke(conv, user_id):
 
 
 def clear_board(conv):
+    """Wipe a board. Returns what was on it, so the Clear can be undone."""
+    strokes = get_strokes(conv)
     _conn.execute("DELETE FROM board_strokes WHERE conv = ?", (conv,))
+    _conn.commit()
+    return strokes
+
+
+def restore_strokes(conv, strokes):
+    """
+    Put cleared strokes back with their old ids, so they keep their place in
+    the drawing order. Ids are never handed out twice (AUTOINCREMENT), so they
+    can't clash with anything drawn since the Clear.
+    """
+    now = _now().isoformat(timespec="seconds")
+    _conn.executemany(
+        "INSERT OR IGNORE INTO board_strokes (id, conv, user_id, tool, color, points, text, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [(s["id"], conv, int(s["user_id"]), s["tool"], s["color"], json.dumps(s["points"]), s["text"], now)
+         for s in strokes])
     _conn.commit()
 
 
