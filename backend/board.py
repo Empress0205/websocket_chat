@@ -11,8 +11,9 @@ WIDTH = 2000
 HEIGHT = 1250
 # Goes up when the board changes in a way an older page or server can't
 # handle (2: text labels are sent live while they're typed; 3: strokes can be
-# moved). The page checks it, with the size, to warn when the server needs restarting.
-VERSION = 3
+# moved; 4: a Clear can be undone). The page checks it, with the size, to warn
+# when the server needs restarting.
+VERSION = 4
 
 COLORS = ("black", "blue", "red", "green")
 # Shapes are drawn between two points: where the drag started and where it is
@@ -24,6 +25,10 @@ MAX_BATCH = 400       # numbers in one message (200 points)
 MAX_POINTS = 6000     # numbers in one stroke (3000 points)
 MAX_TEXT = 80         # characters in a text label
 MAX_STROKES = 3000    # strokes on one board before it must be cleared
+# After a Clear, the person who cleared the board can bring it back for this
+# long. The page shows its Undo button for 10 seconds; the extra few seconds
+# allow for a slow connection.
+UNDO_CLEAR_SECONDS = 15
 
 
 def start_stroke(tool, color, text):
