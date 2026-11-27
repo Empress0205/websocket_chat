@@ -67,6 +67,7 @@ export function handleMessage(msg) {
     case "board_saved":
     case "board_removed":
     case "board_cleared":
+    case "board_restored":
     case "board_cursor":
     case "board_moving":
     case "board_moved":
