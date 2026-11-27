@@ -842,6 +842,9 @@ body {
 }
 .panel-foot span { flex: 1; }
 .panel-foot span.problem { color: #b91c1c; font-weight: 600; }
+/* "You cleared the board. Undo": shown for a few seconds after a Clear */
+.text-btn.undo-clear { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; font-weight: 600; }
+.text-btn.undo-clear:hover { background: #dbeafe; }
 
 /* "admin is drawing on the board · Open the board" */
 .board-banner {
