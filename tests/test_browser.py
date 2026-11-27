@@ -224,6 +224,21 @@ class BoardInBrowserTests(BrowserTestCase):
         await self.alice.wait_for_timeout(400)
         self.assertEqual(db.get_strokes("general"), [])
 
+    async def test_undo_brings_back_a_cleared_board(self):
+        x, y = self.box["x"] + 150, self.box["y"] + 200
+        rect = await self.draw("rect", x, y, x + 120, y + 80)
+        self.alice.once("dialog", lambda dialog: dialog.accept())  # "Clear the board for everyone?"
+        await self.alice.click("#board-clear")
+        await self.alice.wait_for_selector("#board-undo-clear:visible")
+        self.assertFalse(await self.bob.is_visible("#board-undo-clear"), "only for the one who cleared it")
+        self.assertIn("alice cleared", await self.bob.text_content("#board-note"))
+        self.assertEqual(db.get_strokes("general"), [])
+
+        await self.alice.click("#board-undo-clear")
+        await self.bob.wait_for_function("document.getElementById('board-note').textContent.includes('brought')")
+        self.assertEqual(db.get_strokes("general"), [rect])
+        self.assertFalse(await self.alice.is_visible("#board-undo-clear"))
+
     async def test_drawing_lands_in_the_right_place_when_zoomed(self):
         # The same mouse drag at ~195% makes a line ~1.95x shorter in board units.
         mx, my = self.box["x"] + self.box["width"] / 2, self.box["y"] + self.box["height"] / 2
