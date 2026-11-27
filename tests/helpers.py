@@ -77,11 +77,13 @@ class ServerTestCase(unittest.IsolatedAsyncioTestCase):
         for name in self.ADMINS:
             db._conn.execute("UPDATE users SET is_admin = 1 WHERE username = ?", (name,))
         db._conn.commit()
-        # Start from a clean slate: nobody connected, no huddles going on, and
-        # no login attempts counted (the per-username limit lives in memory, so
-        # without this, alice would be "trying too often" by the sixth test).
+        # Start from a clean slate: nobody connected, no huddles going on, no
+        # Clear waiting to be undone, and no login attempts counted (the
+        # per-username limit lives in memory, so without this, alice would be
+        # "trying too often" by the sixth test).
         server.clients.clear()
         voice.huddles.clear()
+        server.cleared_boards.clear()
         server.login_limits.buckets.clear()
         server.new_client = _fast_client if self.FAST else _real_new_client
         # 127.0.0.1, not "localhost": on Windows, "localhost" is two addresses
