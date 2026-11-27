@@ -35,6 +35,9 @@ PING_TIMEOUT = 20
 # Login attempts per username, shared by every connection: 5 tries, then one
 # every 30 seconds. (Each connection also has its own limit, in new_client.)
 login_limits = RateLimiterGroup(capacity=5, per_second=1 / 30)
+# The last Clear of each board, kept in memory for a few seconds so it can be
+# undone: {conv: {"strokes": [...], "by": user id, "at": time.monotonic()}}.
+cleared_boards = {}
 
 # Every connected client, mapped to what we know about them.
 # Until a client logs in, its "id" is None and it can't do anything else.
@@ -810,8 +813,29 @@ async def handle_board(ws, msg):
             await send_to_board(conv, {"type": "board_removed", "ids": [stroke_id]})
 
     elif kind == "board_clear":
-        db.clear_board(conv)
-        await send_to_board(conv, {"type": "board_cleared", "by": me["name"]})
+        strokes = db.clear_board(conv)
+        now = time.monotonic()
+        for key in [k for k, c in cleared_boards.items() if now - c["at"] > board.UNDO_CLEAR_SECONDS]:
+            del cleared_boards[key]  # too old to undo: forget it
+        if strokes:  # clearing an empty board leaves nothing to undo
+            cleared_boards[conv] = {"strokes": strokes, "by": me["id"], "at": now}
+        await send_to_board(conv, {"type": "board_cleared", "by": me["name"], "id": me["id"],
+                                   "undo": board.UNDO_CLEAR_SECONDS if strokes else 0})
+
+    elif kind == "board_clear_undo":
+        # Bring back what the last Clear wiped. Only the person who cleared it
+        # can, and only for a few seconds: after that the Clear is for good.
+        cleared = cleared_boards.get(conv)
+        if cleared is None or cleared["by"] != me["id"] \
+                or time.monotonic() - cleared["at"] > board.UNDO_CLEAR_SECONDS:
+            await send(ws, {"type": "error", "text": "It's too late to undo that Clear."})
+            return
+        if db.count_strokes(conv) + len(cleared["strokes"]) > board.MAX_STROKES:
+            await send(ws, {"type": "error", "text": "The board is too full to bring the old drawing back."})
+            return
+        del cleared_boards[conv]
+        db.restore_strokes(conv, cleared["strokes"])
+        await send_to_board(conv, {"type": "board_restored", "by": me["name"], "strokes": cleared["strokes"]})
 
     elif kind == "board_snapshot":
         # Post a picture of the board into the conversation, like a message.
