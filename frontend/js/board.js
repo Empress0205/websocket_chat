@@ -19,7 +19,8 @@ import { sendJSON } from "./connection.js";
 
 const W = 2000;
 const H = 1250;
-const BOARD_VERSION = 3;  // the same as VERSION in backend/board.py
+const BOARD_VERSION = 4;  // the same as VERSION in backend/board.py
+const UNDO_CLEAR_FOR = 10000; // ms the Undo button stays after I clear the board
 const ZOOM_MAX = 4;       // 400% of the "fit the height" size
 const ZOOM_STEP = 1.25;   // each click of + or -
 const COLORS = { black: "#111827", blue: "#2563eb", red: "#dc2626", green: "#16a34a" };
@@ -102,6 +103,7 @@ export function closeBoard() {
   board.open = false;
   board.key = null;
   cancelMyStroke();
+  hideUndoClear();
   panel.classList.add("hidden");
   app.classList.remove("with-panel");
   boardBtn.setAttribute("aria-pressed", "false");
@@ -126,6 +128,7 @@ function requestBoard(key) {
   board.drag = null;
   board.viewers = [];
   renderViewers();
+  hideUndoClear(); // an Undo is for the board it was shown on
   setNote(NOTE);
   queueDraw();
   sendJSON(key.startsWith("dm:")
@@ -264,7 +267,24 @@ export function handleBoardMessage(msg) {
       board.moving.clear();
       board.selected = null;
       board.drag = null;
-      setNote(`${msg.by === state.myName ? "You" : msg.by} cleared the board.`);
+      if (msg.id === state.myId && msg.undo) {
+        // My own Clear: offer to take it back for a few seconds.
+        setNote("You cleared the board.", false, UNDO_CLEAR_FOR);
+        showUndoClear();
+      } else {
+        hideUndoClear(); // a newer Clear (or someone else's) can't be undone from here
+        setNote(`${msg.id === state.myId ? "You" : msg.by} cleared the board.`);
+      }
+      break;
+
+    case "board_restored":
+      // A Clear was undone: the old strokes come back, with their old ids.
+      // Sorting by id puts them back in the drawing order, under anything
+      // drawn since the Clear.
+      for (const s of msg.strokes) board.strokes.set(s.id, s);
+      board.strokes = new Map([...board.strokes].sort((a, b) => a[0] - b[0]));
+      hideUndoClear();
+      setNote(`${msg.by === state.myName ? "You" : msg.by} brought the board back.`);
       break;
 
     case "board_cursor":
@@ -298,13 +318,36 @@ function renderViewers() {
 
 let noteTimer = null;
 // A short message under the board. It goes back to the usual one after a few
-// seconds, unless it's a problem that stays until it's fixed (`sticky`).
-function setNote(text, sticky = false) {
+// seconds (`ms`), unless it's a problem that stays until it's fixed (`sticky`).
+function setNote(text, sticky = false, ms = 5000) {
   noteEl.textContent = text;
   noteEl.classList.toggle("problem", sticky);
   clearTimeout(noteTimer);
-  if (text !== NOTE && !sticky) noteTimer = setTimeout(() => setNote(NOTE), 5000);
+  if (text !== NOTE && !sticky) noteTimer = setTimeout(() => setNote(NOTE), ms);
 }
+
+// --- Undo a Clear ---
+// The server keeps what a Clear wiped for a few seconds. While it does, the
+// person who cleared the board gets an Undo button next to the note.
+
+const undoClearBtn = document.getElementById("board-undo-clear");
+let undoClearTimer = null;
+
+function showUndoClear() {
+  undoClearBtn.classList.remove("hidden");
+  clearTimeout(undoClearTimer);
+  undoClearTimer = setTimeout(hideUndoClear, UNDO_CLEAR_FOR);
+}
+
+function hideUndoClear() {
+  undoClearBtn.classList.add("hidden");
+  clearTimeout(undoClearTimer);
+}
+
+undoClearBtn.onclick = () => {
+  sendJSON({ type: "board_clear_undo" });
+  hideUndoClear(); // the strokes come back with "board_restored"
+};
 
 // --- Drawing on the screen ---
 
